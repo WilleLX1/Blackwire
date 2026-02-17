@@ -1,0 +1,98 @@
+#include "blackwire/util/message_view.hpp"
+
+#include <algorithm>
+
+#include <QDateTime>
+
+namespace blackwire {
+
+namespace {
+
+QDateTime ParseMessageTime(const std::string& value) {
+    const QString iso = QString::fromStdString(value);
+    QDateTime parsed = QDateTime::fromString(iso, Qt::ISODateWithMs);
+    if (!parsed.isValid()) {
+        parsed = QDateTime::fromString(iso, Qt::ISODate);
+    }
+    return parsed;
+}
+
+bool IsBefore(const LocalMessage& lhs, const LocalMessage& rhs) {
+    const QDateTime left_time = ParseMessageTime(lhs.created_at);
+    const QDateTime right_time = ParseMessageTime(rhs.created_at);
+    if (left_time.isValid() && right_time.isValid() && left_time != right_time) {
+        return left_time < right_time;
+    }
+    if (lhs.created_at != rhs.created_at) {
+        return lhs.created_at < rhs.created_at;
+    }
+    return lhs.id < rhs.id;
+}
+
+}  // namespace
+
+QString ExtractLegacyPlaintext(const QString& rendered_text) {
+    const QString simplified = rendered_text.trimmed();
+    if (simplified.isEmpty()) {
+        return {};
+    }
+
+    const int delimiter = simplified.indexOf(": ");
+    if (delimiter < 0) {
+        return simplified;
+    }
+
+    return simplified.mid(delimiter + 2).trimmed();
+}
+
+QString FormatThreadTimestamp(const QString& created_at_iso) {
+    if (created_at_iso.trimmed().isEmpty()) {
+        return "-";
+    }
+
+    QDateTime created = QDateTime::fromString(created_at_iso, Qt::ISODateWithMs);
+    if (!created.isValid()) {
+        created = QDateTime::fromString(created_at_iso, Qt::ISODate);
+    }
+    if (!created.isValid()) {
+        return created_at_iso;
+    }
+
+    const QDateTime local = created.toLocalTime();
+    return local.toString("MMM d, h:mm AP");
+}
+
+std::vector<ThreadMessageView> BuildThreadMessageViews(
+    const std::vector<LocalMessage>& messages,
+    const std::string& self_user_id,
+    const QString& peer_sender_label) {
+    std::vector<const LocalMessage*> ordered;
+    ordered.reserve(messages.size());
+    for (const auto& message : messages) {
+        ordered.push_back(&message);
+    }
+    std::stable_sort(ordered.begin(), ordered.end(), [](const LocalMessage* lhs, const LocalMessage* rhs) {
+        return IsBefore(*lhs, *rhs);
+    });
+
+    std::vector<ThreadMessageView> views;
+    views.reserve(ordered.size());
+
+    for (const auto* item : ordered) {
+        ThreadMessageView view;
+        view.id = QString::fromStdString(item->id);
+        view.created_at_iso = QString::fromStdString(item->created_at);
+        view.created_at_display = FormatThreadTimestamp(view.created_at_iso);
+        view.outgoing = item->sender_user_id == self_user_id;
+        view.sender_label = view.outgoing ? "You" : (peer_sender_label.trimmed().isEmpty() ? "Peer" : peer_sender_label.trimmed());
+
+        const QString plaintext = QString::fromStdString(item->plaintext);
+        view.body = plaintext.isEmpty() ? ExtractLegacyPlaintext(QString::fromStdString(item->rendered_text)) : plaintext;
+        view.grouped_with_previous = !views.empty() && views.back().outgoing == view.outgoing;
+        views.push_back(view);
+    }
+
+    return views;
+}
+
+}  // namespace blackwire

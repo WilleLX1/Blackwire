@@ -1,0 +1,43 @@
+name: client-cpp-gui-windows
+
+on:
+  push:
+    paths:
+      - 'client-cpp-gui/**'
+      - '.github/workflows/client-cpp-gui-windows.yml'
+  pull_request:
+    paths:
+      - 'client-cpp-gui/**'
+      - '.github/workflows/client-cpp-gui-windows.yml'
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/client-cpp-gui/.vcpkg'
+
+      - name: Configure
+        shell: pwsh
+        working-directory: client-cpp-gui
+        run: |
+          $env:VCPKG_ROOT = "${{ github.workspace }}/client-cpp-gui/.vcpkg"
+          cmake --preset windows-debug
+
+      - name: Build
+        shell: pwsh
+        working-directory: client-cpp-gui
+        run: cmake --build --preset build-debug
+
+      - name: Test
+        shell: pwsh
+        working-directory: client-cpp-gui
+        run: ctest --preset test-debug

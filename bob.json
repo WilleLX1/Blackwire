@@ -1,0 +1,23 @@
+{
+  "base_url": "http://localhost:8000",
+  "device": {
+    "enc_x25519_private": "EXdYgyD7z+7VIUNAs0RblSBXagQu93TMQs2qmbaw/co=",
+    "enc_x25519_public": "9+htUcoQ6P6ju3pawnYLZXuzEy3RPC4Q4YM8gvT8LkI=",
+    "id": "90a1b60f-dc8d-4d80-80c8-3da9e5e02aa6",
+    "ik_ed25519_private": "sMmzVxg/fBTKwORFg251QJFWTObFJpqJijUBlrYHh5Q=",
+    "ik_ed25519_public": "wJp61uGE6eiG5imo83Hk1YQc9+OZpizzwlhojsStt0w=",
+    "label": "phone"
+  },
+  "tokens": {
+    "access_expires_in": 900,
+    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5NmNhZjI0YS1hODhmLTRjNzctOTRhYS1mOTIwMWEyYmJlMWEiLCJ1c2VybmFtZSI6ImJvYiIsInR5cGUiOiJhY2Nlc3MiLCJpYXQiOjE3NzA5OTUwNjYsImV4cCI6MTc3MDk5NTk2Nn0.aNAALzI8qYy8FVcQLIggyaNdh-gRBCAvNRnIO7XeMbU",
+    "refresh_expires_in": 2592000,
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5NmNhZjI0YS1hODhmLTRjNzctOTRhYS1mOTIwMWEyYmJlMWEiLCJ0eXBlIjoicmVmcmVzaCIsInJpZCI6ImMyNzlhMDE1LTc5ZDYtNGE5Ny1hNDU1LTU0ZTk3Y2M0NGUyNSIsImlhdCI6MTc3MDk5NTA2NiwiZXhwIjoxNzczNTg3MDY2fQ.beuw9yeThBXp-yxtdOv1UTTfWFvxtk7DvA-jvLYlwzU",
+    "token_type": "bearer"
+  },
+  "user": {
+    "created_at": "2026-02-13T15:04:26.373113Z",
+    "id": "96caf24a-a88f-4c77-94aa-f9201a2bbe1a",
+    "username": "bob"
+  }
+}

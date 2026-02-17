@@ -1,0 +1,20 @@
+{
+  "name": "blackwire-client-cpp-gui",
+  "version-string": "0.1.0",
+  "builtin-baseline": "ac7af7424cbaf9057cb246b620f455303dccd6ed",
+  "dependencies": [
+    "qtbase",
+    "qtwebsockets",
+    {
+      "name": "qtmultimedia",
+      "default-features": false,
+      "features": [
+        "widgets"
+      ]
+    },
+    "libsodium",
+    "nlohmann-json",
+    "gtest",
+    "spdlog"
+  ]
+}

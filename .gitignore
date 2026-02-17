@@ -1,0 +1,100 @@
+# ------------------------------
+# OS / Editor
+# ------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*.tmp
+*.temp
+.vscode/
+.idea/
+*.code-workspace
+
+# ------------------------------
+# Environment / Secrets
+# ------------------------------
+.env
+.env.*
+infra/.env
+infra/.env.*
+
+# ------------------------------
+# Python
+# ------------------------------
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.pyre/
+pip-wheel-metadata/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Pytest temp dirs observed in this repo
+.pytest_tmp*/
+.pytest_tmp_*/
+.pytest_tmp_dbg/
+.pytest_tmp_run_*/
+.pytest_tmp_run_local/
+.pytest_tmp_security/
+server/.pytest_tmp/
+
+# Server local runtime DBs
+*.db
+*.sqlite
+*.sqlite3
+blackwire.db
+
+# ------------------------------
+# C++ / CMake / Qt / MSVC
+# ------------------------------
+client-cpp-gui/build/
+client-cpp-gui/build*/
+client-cpp-gui/out/
+client-cpp-gui/.vcpkg/
+client-cpp-gui/vcpkg_installed/
+client-cpp-gui/.vs/
+client-cpp-gui/CMakeCache.txt
+client-cpp-gui/CMakeFiles/
+client-cpp-gui/Testing/
+client-cpp-gui/CMakeUserPresets.json
+client-cpp-gui/*.user
+*.vcxproj.user
+*.VC.db
+*.VC.opendb
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.exe
+*.app
+*.dSYM/
+
+# ------------------------------
+# Local app/reference-client state
+# ------------------------------
+.blackwire_client_state.json
+.bw_tor_hs_*.txt
+
+# ------------------------------
+# Logs
+# ------------------------------
+*.log

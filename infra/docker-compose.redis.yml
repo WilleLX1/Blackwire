@@ -1,0 +1,13 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  server:
+    environment:
+      BLACKWIRE_USE_REDIS_RATE_LIMIT: "true"
+      BLACKWIRE_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
