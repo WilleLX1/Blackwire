@@ -69,6 +69,8 @@ cp infra/example.env infra/.env
 ```
 
 Important:
+- Randomize secrets before first startup:
+  - `./infra/randomize-env-secrets.ps1`
 - If `BLACKWIRE_TOR_ENABLED=true`, set `BLACKWIRE_FEDERATION_SIGNING_PRIVATE_KEY_B64` to a base64-encoded 32-byte key before startup.
 
 2. Start Postgres + API server:

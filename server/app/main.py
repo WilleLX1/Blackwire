@@ -39,6 +39,9 @@ def _extract_bearer_token(websocket: WebSocket) -> str | None:
         token = auth_header[len(_BEARER_PREFIX) :].strip()
         if token:
             return token
+    query_token = websocket.query_params.get("access_token", "").strip()
+    if query_token:
+        return query_token
     return None
 
 

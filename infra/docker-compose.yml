@@ -22,7 +22,10 @@ services:
       dockerfile: server/Dockerfile
     restart: unless-stopped
     env_file:
-      - ./example.env
+      - path: ./example.env
+        required: true
+      - path: ./.env
+        required: false
     depends_on:
       db:
         condition: service_healthy
