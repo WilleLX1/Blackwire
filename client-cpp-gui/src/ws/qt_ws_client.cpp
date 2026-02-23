@@ -214,7 +214,7 @@ QUrl QtWsClient::BuildWsUrl() const {
     url.setScheme(scheme);
     url.setHost(base.host());
     url.setPort(base.port(base.scheme() == "https" ? 443 : 80));
-    url.setPath("/api/v1/ws");
+    url.setPath("/api/v2/ws");
     return url;
 }
 

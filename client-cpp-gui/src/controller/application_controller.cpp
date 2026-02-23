@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <set>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -29,6 +30,42 @@ QString SanitizeDiagnosticText(QString text) {
     return SanitizeDiagnosticsText(text);
 }
 
+std::string CanonicalMessageSignature(
+    const std::string& sender_address,
+    const std::string& sender_device_uid,
+    const std::string& recipient_address,
+    const std::string& recipient_device_uid,
+    const std::string& client_message_id,
+    long long sent_at_ms,
+    const std::string& sender_prev_hash,
+    const std::string& sender_chain_hash,
+    const std::string& ciphertext_hash,
+    const std::string& aad_hash) {
+    return sender_address + "\n" + sender_device_uid + "\n" + recipient_address + "\n" + recipient_device_uid + "\n" +
+           client_message_id + "\n" + std::to_string(sent_at_ms) + "\n" + sender_prev_hash + "\n" + sender_chain_hash +
+           "\n" + ciphertext_hash + "\n" + aad_hash;
+}
+
+std::string AggregateChainHash(
+    ICryptoService& crypto,
+    const std::string& sender_prev_hash,
+    const std::string& client_message_id,
+    long long sent_at_ms,
+    const std::vector<std::string>& hash_material) {
+    std::vector<std::string> ordered = hash_material;
+    std::sort(ordered.begin(), ordered.end());
+    std::string aggregate;
+    for (std::size_t i = 0; i < ordered.size(); ++i) {
+        if (i > 0) {
+            aggregate.append("|");
+        }
+        aggregate.append(ordered[i]);
+    }
+    const std::string aggregate_hash = crypto.Sha256(aggregate);
+    return crypto.Sha256(
+        sender_prev_hash + "\n" + client_message_id + "\n" + std::to_string(sent_at_ms) + "\n" + aggregate_hash);
+}
+
 }  // namespace
 
 ApplicationController::ApplicationController(
@@ -50,6 +87,8 @@ ApplicationController::ApplicationController(
       profile_name_(profile_name.trimmed().isEmpty() ? "default" : profile_name.trimmed().toLower().toStdString()) {
     qRegisterMetaType<ConversationListItemView>("ConversationListItemView");
     qRegisterMetaType<std::vector<ConversationListItemView>>("std::vector<ConversationListItemView>");
+    qRegisterMetaType<DeviceOut>("blackwire::DeviceOut");
+    qRegisterMetaType<std::vector<DeviceOut>>("std::vector<blackwire::DeviceOut>");
     qRegisterMetaType<AudioDeviceOptionView>("blackwire::AudioDeviceOptionView");
     qRegisterMetaType<std::vector<AudioDeviceOptionView>>("std::vector<blackwire::AudioDeviceOptionView>");
     qRegisterMetaType<CallStateView>("blackwire::CallStateView");
@@ -60,9 +99,76 @@ ApplicationController::ApplicationController(
         [this](const WsEventMessageNew& event) {
             try {
                 const auto& msg = event.message;
-                if (!state_.MarkMessageSeen(msg.id)) {
-                    ws_client_.SendAck(msg.id);
+                const std::string ack_id = event.copy_id.empty() ? msg.id : event.copy_id;
+                const std::string dedupe_id = ack_id.empty() ? msg.id : ack_id;
+                if (!state_.MarkMessageSeen(dedupe_id)) {
+                    ws_client_.SendAck(ack_id.empty() ? msg.id : ack_id);
                     return;
+                }
+
+                if (!msg.sender_device_uid.empty() && !msg.sender_device_pubkey.empty() &&
+                    !msg.envelope.signature_b64.empty()) {
+                    const auto pin_it = state_.pinned_sender_sign_keys_by_device_uid.find(msg.sender_device_uid);
+                    if (pin_it != state_.pinned_sender_sign_keys_by_device_uid.end() &&
+                        pin_it->second != msg.sender_device_pubkey) {
+                        const QString line = QString("Integrity warning: sender key changed for device %1")
+                                                 .arg(QString::fromStdString(msg.sender_device_uid));
+                        RecordDiagnostic(line);
+                        emit IntegrityWarningOccurred(line);
+                        return;
+                    }
+                    state_.pinned_sender_sign_keys_by_device_uid[msg.sender_device_uid] = msg.sender_device_pubkey;
+
+                    const QByteArray ciphertext_bytes = QByteArray::fromBase64(
+                        QByteArray::fromStdString(msg.envelope.ciphertext_b64));
+                    const QByteArray aad_bytes = QByteArray::fromBase64(
+                        QByteArray::fromStdString(msg.envelope.aad_b64));
+                    const std::string ciphertext_hash = crypto_.Sha256(ciphertext_bytes.toStdString());
+                    const std::string aad_hash = crypto_.Sha256(aad_bytes.toStdString());
+                    const std::string recipient_address = msg.envelope.recipient_user_address.empty()
+                                                              ? QString("%1@%2")
+                                                                    .arg(
+                                                                        QString::fromStdString(state_.user.username).trimmed().toLower(),
+                                                                        QString::fromStdString(
+                                                                            state_.user.home_server_onion.empty()
+                                                                                ? ServerAuthority().toStdString()
+                                                                                : state_.user.home_server_onion))
+                                                                    .toStdString()
+                                                              : msg.envelope.recipient_user_address;
+                    const std::string canonical = CanonicalMessageSignature(
+                        msg.sender_address,
+                        msg.sender_device_uid,
+                        recipient_address,
+                        msg.envelope.recipient_device_uid.empty() ? msg.envelope.recipient_device_id
+                                                                  : msg.envelope.recipient_device_uid,
+                        msg.client_message_id,
+                        msg.sent_at_ms,
+                        msg.sender_prev_hash,
+                        msg.sender_chain_hash,
+                        ciphertext_hash,
+                        aad_hash);
+                    if (!crypto_.VerifyDetached(
+                            msg.sender_device_pubkey,
+                            canonical,
+                            msg.envelope.signature_b64)) {
+                        const QString line = QString("Integrity warning: invalid sender signature from %1")
+                                                 .arg(QString::fromStdString(msg.sender_address));
+                        RecordDiagnostic(line);
+                        emit IntegrityWarningOccurred(line);
+                        return;
+                    }
+
+                    const std::string chain_key = msg.conversation_id + "|" + msg.sender_device_uid;
+                    const auto chain_it = state_.last_verified_chain_hash_by_conversation_sender.find(chain_key);
+                    const std::string expected_prev = chain_it == state_.last_verified_chain_hash_by_conversation_sender.end()
+                                                          ? std::string()
+                                                          : chain_it->second;
+                    if (msg.sender_prev_hash != expected_prev) {
+                        const QString line = QString("Integrity warning: missing/reordered message detected");
+                        RecordDiagnostic(line);
+                        emit IntegrityWarningOccurred(line);
+                    }
+                    state_.last_verified_chain_hash_by_conversation_sender[chain_key] = msg.sender_chain_hash;
                 }
 
                 std::string plaintext = "[unable to decrypt]";
@@ -76,7 +182,7 @@ ApplicationController::ApplicationController(
                     plaintext = "[unable to decrypt]";
                 }
 
-                ws_client_.SendAck(msg.id);
+                ws_client_.SendAck(ack_id.empty() ? msg.id : ack_id);
 
                 LocalMessage local;
                 local.id = msg.id;
@@ -368,7 +474,7 @@ void ApplicationController::Register(const QString& username, const QString& pas
         pending_request_messages_.clear();
         pending_request_senders_.clear();
 
-        SaveTokenPair(response.tokens);
+        SaveBootstrapToken(response.tokens);
         PersistState();
 
         RecordDiagnostic(QString("register success user=%1").arg(QString::fromStdString(state_.user.username)));
@@ -400,7 +506,7 @@ void ApplicationController::Login(const QString& username, const QString& passwo
             pending_request_senders_.clear();
         }
 
-        SaveTokenPair(response.tokens);
+        SaveBootstrapToken(response.tokens);
         PersistState();
 
         RecordDiagnostic(QString("login success user=%1").arg(QString::fromStdString(state_.user.username)));
@@ -409,8 +515,37 @@ void ApplicationController::Login(const QString& username, const QString& passwo
         LoadAudioDevices();
 
         if (state_.has_device) {
-            LoadConversations();
-            StartRealtime();
+            try {
+                std::string error;
+                const auto ik_private = secret_store_.GetSecret(SecretKey("ik_private"), &error);
+                if (!ik_private.has_value()) {
+                    throw std::runtime_error("Device signing key missing");
+                }
+                const std::string nonce = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+                const long long timestamp_ms = QDateTime::currentMSecsSinceEpoch();
+                const std::string canonical =
+                    "BIND_DEVICE\n" + state_.user.id + "\n" + state_.device.id + "\n" + nonce + "\n" +
+                    std::to_string(timestamp_ms);
+                const std::string signature = crypto_.SignDetached(ik_private.value(), canonical);
+                const auto bound = api_client_.BindDevice(
+                    state_.base_url,
+                    RequireBootstrapToken(),
+                    state_.device.id,
+                    nonce,
+                    timestamp_ms,
+                    signature);
+                SaveTokenPair(bound.tokens);
+                PersistState();
+                LoadConversations();
+                StartRealtime();
+            } catch (const std::exception& ex) {
+                const QString line = QString("Device re-bind failed: %1").arg(ex.what());
+                RecordDiagnostic(line);
+                emit ErrorOccurred(line);
+                state_.has_device = false;
+                PersistState();
+                emit DeviceStateChanged(false);
+            }
         }
     } catch (const std::exception& ex) {
         const QString line = QString("Login failed: %1").arg(ex.what());
@@ -429,6 +564,7 @@ void ApplicationController::Logout() {
     std::string error;
     secret_store_.DeleteSecret(SecretKey("access_token"), &error);
     secret_store_.DeleteSecret(SecretKey("refresh_token"), &error);
+    secret_store_.DeleteSecret(SecretKey("bootstrap_token"), &error);
     secret_store_.DeleteSecret(SecretKey("ik_private"), &error);
     secret_store_.DeleteSecret(SecretKey("enc_private"), &error);
 
@@ -442,6 +578,7 @@ void ApplicationController::Logout() {
     RecordDiagnostic("logout completed");
     emit AuthStateChanged(false, QString());
     emit DeviceStateChanged(false);
+    emit AccountDevicesChanged(std::vector<DeviceOut>{});
     emit ConversationListChanged(std::vector<ConversationListItemView>{});
     emit ConversationSelected(QString(), {});
     LoadAudioDevices();
@@ -454,14 +591,23 @@ void ApplicationController::SetupDevice(const QString& label) {
         request.label = label.toStdString();
         request.ik_ed25519_pub = keys.ik_ed25519_public_b64;
         request.enc_x25519_pub = keys.enc_x25519_public_b64;
+        request.pub_sign_key = keys.ik_ed25519_public_b64;
+        request.pub_dh_key = keys.enc_x25519_public_b64;
 
         const auto operation = [this, &request]() {
-            return api_client_.RegisterDevice(state_.base_url, RequireAccessToken(), request);
+            return api_client_.RegisterDevice(state_.base_url, RequireBootstrapToken(), request);
         };
 
-        const auto device = CallWithAuthRetryOnce<DeviceOut>(operation, [this]() { RefreshAccessToken(); });
+        const auto response = operation();
+        SaveTokenPair(response.tokens);
 
-        state_.device = device;
+        state_.device.id = response.tokens.device_uid;
+        state_.device.device_uid = response.tokens.device_uid;
+        state_.device.user_id = response.user.id;
+        state_.device.label = label.toStdString();
+        state_.device.ik_ed25519_pub = keys.ik_ed25519_public_b64;
+        state_.device.enc_x25519_pub = keys.enc_x25519_public_b64;
+        state_.device.status = "active";
         state_.has_device = true;
 
         std::string error;
@@ -481,6 +627,69 @@ void ApplicationController::SetupDevice(const QString& label) {
         StartRealtime();
     } catch (const std::exception& ex) {
         const QString line = QString("Device setup failed: %1").arg(ex.what());
+        RecordDiagnostic(line);
+        emit ErrorOccurred(line);
+    }
+}
+
+void ApplicationController::LoadAccountDevices() {
+    try {
+        if (!state_.has_user || !state_.has_device) {
+            emit AccountDevicesChanged(std::vector<DeviceOut>{});
+            return;
+        }
+
+        const auto operation = [this]() {
+            return api_client_.ListDevices(state_.base_url, RequireAccessToken());
+        };
+
+        auto devices = CallWithAuthRetryOnce<std::vector<DeviceOut>>(operation, [this]() { RefreshAccessToken(); });
+        std::sort(devices.begin(), devices.end(), [](const DeviceOut& lhs, const DeviceOut& rhs) {
+            const std::string lhs_uid = lhs.device_uid.empty() ? lhs.id : lhs.device_uid;
+            const std::string rhs_uid = rhs.device_uid.empty() ? rhs.id : rhs.device_uid;
+            if (lhs.status != rhs.status) {
+                return lhs.status < rhs.status;
+            }
+            if (lhs.created_at != rhs.created_at) {
+                return lhs.created_at > rhs.created_at;
+            }
+            return lhs_uid < rhs_uid;
+        });
+        emit AccountDevicesChanged(devices);
+    } catch (const std::exception& ex) {
+        const QString line = QString("Load account devices failed: %1").arg(ex.what());
+        RecordDiagnostic(line);
+        emit ErrorOccurred(line);
+    }
+}
+
+void ApplicationController::RevokeDevice(const QString& device_uid) {
+    try {
+        if (!state_.has_user || !state_.has_device) {
+            return;
+        }
+        const std::string target_uid = device_uid.trimmed().toStdString();
+        if (target_uid.empty()) {
+            return;
+        }
+
+        const auto operation = [this, &target_uid]() {
+            return api_client_.RevokeDevice(state_.base_url, RequireAccessToken(), target_uid);
+        };
+        const auto revoked = CallWithAuthRetryOnce<DeviceOut>(operation, [this]() { RefreshAccessToken(); });
+        const std::string revoked_uid = revoked.device_uid.empty() ? revoked.id : revoked.device_uid;
+        RecordDiagnostic(QString("revoked device uid=%1").arg(QString::fromStdString(revoked_uid)));
+
+        peer_device_cache_.clear();
+        if (state_.has_device && revoked_uid == state_.device.id) {
+            emit IntegrityWarningOccurred("This device has been revoked. Sign in again.");
+            Logout();
+            return;
+        }
+
+        LoadAccountDevices();
+    } catch (const std::exception& ex) {
+        const QString line = QString("Revoke device failed: %1").arg(ex.what());
         RecordDiagnostic(line);
         emit ErrorOccurred(line);
     }
@@ -678,20 +887,124 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
 
         const std::string conversation_id = ResolveConversationIdForPeer(normalized_peer);
         RevealConversation(conversation_id, false);
-        const DeviceOut recipient_device = ResolveRecipientDevice(normalized_peer);
 
-        const std::string ciphertext = crypto_.EncryptForRecipient(
-            recipient_device.enc_x25519_pub,
-            message_text.toStdString());
+        const std::vector<DeviceOut> recipient_devices = ResolveRecipientDevices(normalized_peer);
+        const std::vector<DeviceOut> own_devices = ResolveOwnActiveDevices();
+        std::set<std::string> seen_targets;
+
+        const QString home_server = QString::fromStdString(
+            state_.user.home_server_onion.empty() ? ServerAuthority().toStdString() : state_.user.home_server_onion);
+        const std::string peer_address =
+            normalized_peer.contains('@')
+                ? normalized_peer.toStdString()
+                : QString("%1@%2").arg(normalized_peer, home_server).toStdString();
+        const std::string self_address =
+            QString("%1@%2")
+                .arg(QString::fromStdString(state_.user.username).trimmed().toLower(), home_server)
+                .toStdString();
 
         MessageSendRequest request;
         request.conversation_id = conversation_id;
-        request.envelope.version = 1;
-        request.envelope.alg = "libsodium-sealedbox-v1";
-        request.envelope.recipient_device_id = recipient_device.id;
-        request.envelope.ciphertext_b64 = ciphertext;
-        request.envelope.aad_b64.clear();
-        request.envelope.client_message_id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        request.client_message_id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
+        request.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
+        const std::string sender_chain_key = conversation_id + "|" + state_.device.id;
+        const auto chain_it = state_.last_verified_chain_hash_by_conversation_sender.find(sender_chain_key);
+        request.sender_prev_hash =
+            chain_it == state_.last_verified_chain_hash_by_conversation_sender.end() ? "" : chain_it->second;
+
+        struct PendingEnvelope {
+            CipherEnvelope envelope;
+            std::string ciphertext_hash;
+            std::string aad_hash;
+        };
+        std::vector<PendingEnvelope> pending;
+
+        for (const auto& device : recipient_devices) {
+            const std::string target_uid = device.device_uid.empty() ? device.id : device.device_uid;
+            if (target_uid.empty() || seen_targets.contains(target_uid)) {
+                continue;
+            }
+            seen_targets.insert(target_uid);
+
+            PendingEnvelope pending_env;
+            pending_env.envelope.recipient_user_address = peer_address;
+            pending_env.envelope.recipient_device_uid = target_uid;
+            pending_env.envelope.recipient_device_id = target_uid;
+            pending_env.envelope.ciphertext_b64 =
+                crypto_.EncryptForRecipient(device.enc_x25519_pub, message_text.toStdString());
+            pending_env.envelope.aad_b64.clear();
+            pending_env.envelope.sender_device_pubkey = state_.device.ik_ed25519_pub;
+            const QByteArray ciphertext_bytes = QByteArray::fromBase64(
+                QByteArray::fromStdString(pending_env.envelope.ciphertext_b64));
+            pending_env.ciphertext_hash = crypto_.Sha256(ciphertext_bytes.toStdString());
+            pending_env.aad_hash = crypto_.Sha256(std::string());
+            pending.push_back(pending_env);
+        }
+
+        for (const auto& device : own_devices) {
+            const std::string target_uid = device.device_uid.empty() ? device.id : device.device_uid;
+            if (target_uid.empty() || target_uid == state_.device.id || seen_targets.contains(target_uid)) {
+                continue;
+            }
+            seen_targets.insert(target_uid);
+
+            PendingEnvelope pending_env;
+            pending_env.envelope.recipient_user_address = self_address;
+            pending_env.envelope.recipient_device_uid = target_uid;
+            pending_env.envelope.recipient_device_id = target_uid;
+            pending_env.envelope.ciphertext_b64 =
+                crypto_.EncryptForRecipient(device.enc_x25519_pub, message_text.toStdString());
+            pending_env.envelope.aad_b64.clear();
+            pending_env.envelope.sender_device_pubkey = state_.device.ik_ed25519_pub;
+            const QByteArray ciphertext_bytes = QByteArray::fromBase64(
+                QByteArray::fromStdString(pending_env.envelope.ciphertext_b64));
+            pending_env.ciphertext_hash = crypto_.Sha256(ciphertext_bytes.toStdString());
+            pending_env.aad_hash = crypto_.Sha256(std::string());
+            pending.push_back(pending_env);
+        }
+
+        if (pending.empty()) {
+            emit ErrorOccurred("No active target devices available.");
+            return;
+        }
+
+        std::vector<std::string> chain_material;
+        chain_material.reserve(pending.size());
+        for (const auto& item : pending) {
+            const std::string target_uid =
+                item.envelope.recipient_device_uid.empty() ? item.envelope.recipient_device_id
+                                                           : item.envelope.recipient_device_uid;
+            chain_material.push_back(target_uid + ":" + item.ciphertext_hash + ":" + item.aad_hash);
+        }
+        request.sender_chain_hash = AggregateChainHash(
+            crypto_,
+            request.sender_prev_hash,
+            request.client_message_id,
+            request.sent_at_ms,
+            chain_material);
+
+        std::string secret_error;
+        const auto sender_ik_private = secret_store_.GetSecret(SecretKey("ik_private"), &secret_error);
+        if (!sender_ik_private.has_value()) {
+            throw std::runtime_error("Device signing key unavailable");
+        }
+
+        for (auto& item : pending) {
+            const std::string canonical = CanonicalMessageSignature(
+                self_address,
+                state_.device.id,
+                item.envelope.recipient_user_address,
+                item.envelope.recipient_device_uid.empty() ? item.envelope.recipient_device_id
+                                                           : item.envelope.recipient_device_uid,
+                request.client_message_id,
+                request.sent_at_ms,
+                request.sender_prev_hash,
+                request.sender_chain_hash,
+                item.ciphertext_hash,
+                item.aad_hash);
+            item.envelope.signature_b64 = crypto_.SignDetached(sender_ik_private.value(), canonical);
+            request.envelopes.push_back(item.envelope);
+        }
 
         const auto send_op = [this, &request]() {
             return api_client_.SendMessage(state_.base_url, RequireAccessToken(), request);
@@ -709,6 +1022,7 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
         local.rendered_text = RenderMessage(sent.message, message_text.toStdString()).toStdString();
         local.plaintext = message_text.toStdString();
         state_.local_messages[selected_conversation_id_].push_back(local);
+        state_.last_verified_chain_hash_by_conversation_sender[sender_chain_key] = sent.message.sender_chain_hash;
 
         UpsertConversationMeta(
             selected_conversation_id_,
@@ -1038,6 +1352,7 @@ void ApplicationController::ResetLocalState() {
 
     emit AuthStateChanged(false, QString());
     emit DeviceStateChanged(false);
+    emit AccountDevicesChanged(std::vector<DeviceOut>{});
     emit ConversationListChanged(std::vector<ConversationListItemView>{});
     emit ConversationSelected(QString(), {});
     emit ConnectionStatusChanged(connection_status_);
@@ -1136,6 +1451,15 @@ std::string ApplicationController::RequireAccessToken() {
     return value.value();
 }
 
+std::string ApplicationController::RequireBootstrapToken() {
+    std::string error;
+    const auto value = secret_store_.GetSecret(SecretKey("bootstrap_token"), &error);
+    if (!value.has_value()) {
+        throw std::runtime_error("Bootstrap token unavailable");
+    }
+    return value.value();
+}
+
 std::string ApplicationController::RequireRefreshToken() {
     std::string error;
     const auto value = secret_store_.GetSecret(SecretKey("refresh_token"), &error);
@@ -1145,7 +1469,20 @@ std::string ApplicationController::RequireRefreshToken() {
     return value.value();
 }
 
+void ApplicationController::SaveBootstrapToken(const TokenBundle& tokens) {
+    if (tokens.bootstrap_token.empty()) {
+        throw std::runtime_error("Bootstrap token missing");
+    }
+    std::string error;
+    if (!secret_store_.SetSecret(SecretKey("bootstrap_token"), tokens.bootstrap_token, &error)) {
+        throw std::runtime_error(error);
+    }
+}
+
 void ApplicationController::SaveTokenPair(const TokenBundle& tokens) {
+    if (tokens.access_token.empty() || tokens.refresh_token.empty()) {
+        throw std::runtime_error("Access/refresh token pair missing");
+    }
     std::string error;
     if (!secret_store_.SetSecret(SecretKey("access_token"), tokens.access_token, &error)) {
         throw std::runtime_error(error);
@@ -1153,6 +1490,7 @@ void ApplicationController::SaveTokenPair(const TokenBundle& tokens) {
     if (!secret_store_.SetSecret(SecretKey("refresh_token"), tokens.refresh_token, &error)) {
         throw std::runtime_error(error);
     }
+    secret_store_.DeleteSecret(SecretKey("bootstrap_token"), &error);
 }
 
 void ApplicationController::RefreshAccessToken() {
@@ -1591,7 +1929,7 @@ std::string ApplicationController::ResolveConversationIdForPeer(const QString& n
     return conversation.id;
 }
 
-DeviceOut ApplicationController::ResolveRecipientDevice(const QString& normalized_peer) {
+std::vector<DeviceOut> ApplicationController::ResolveRecipientDevices(const QString& normalized_peer) {
     const std::string key = normalized_peer.trimmed().toLower().toStdString();
     if (key.empty()) {
         throw std::runtime_error("Peer address is required");
@@ -1606,8 +1944,27 @@ DeviceOut ApplicationController::ResolveRecipientDevice(const QString& normalize
         return api_client_.GetUserDevice(state_.base_url, RequireAccessToken(), key);
     };
     const auto user_device = CallWithAuthRetryOnce<UserDeviceLookup>(get_device, [this]() { RefreshAccessToken(); });
-    peer_device_cache_[key] = user_device.device;
-    return user_device.device;
+    if (user_device.devices.empty() && (!user_device.device.id.empty() || !user_device.device.device_uid.empty())) {
+        peer_device_cache_[key] = {user_device.device};
+    } else {
+        peer_device_cache_[key] = user_device.devices;
+    }
+    return peer_device_cache_[key];
+}
+
+std::vector<DeviceOut> ApplicationController::ResolveOwnActiveDevices() {
+    const auto operation = [this]() {
+        return api_client_.ListDevices(state_.base_url, RequireAccessToken());
+    };
+    auto devices = CallWithAuthRetryOnce<std::vector<DeviceOut>>(operation, [this]() { RefreshAccessToken(); });
+    std::vector<DeviceOut> active;
+    for (const auto& device : devices) {
+        if (device.status == "revoked") {
+            continue;
+        }
+        active.push_back(device);
+    }
+    return active;
 }
 
 void ApplicationController::UpsertConversationMeta(

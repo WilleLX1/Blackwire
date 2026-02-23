@@ -7,6 +7,7 @@
 #include <QAudioDevice>
 #include <QAudioSink>
 #include <QAudioSource>
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -16,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QMediaDevices>
 #include <QProgressBar>
 #include <QPushButton>
@@ -24,6 +26,7 @@
 #include <QVBoxLayout>
 #include <QtEndian>
 
+#include "blackwire/models/dto.hpp"
 #include "blackwire/models/view_models.hpp"
 
 namespace blackwire {
@@ -36,6 +39,10 @@ constexpr int kAudioMeterMax = 100;
 constexpr int kAudioMeterDecayMs = 45;
 constexpr int kAudioMeterDecayStep = 5;
 constexpr int kMonitorOutputQueueLimit = 96000;
+
+std::string DeviceUid(const DeviceOut& device) {
+    return device.device_uid.empty() ? device.id : device.device_uid;
+}
 
 }  // namespace
 
@@ -70,6 +77,25 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         if (!diagnostics_.isEmpty()) {
             QGuiApplication::clipboard()->setText(diagnostics_);
         }
+    });
+    QObject::connect(account_devices_list_, &QListWidget::itemSelectionChanged, this, [this]() {
+        const auto* item = account_devices_list_->currentItem();
+        if (item == nullptr) {
+            selected_account_device_uid_.clear();
+            revoke_device_button_->setEnabled(false);
+            return;
+        }
+        selected_account_device_uid_ = item->data(Qt::UserRole).toString();
+        const QString status = item->data(Qt::UserRole + 1).toString().trimmed().toLower();
+        const bool is_self = selected_account_device_uid_ == current_device_uid_;
+        revoke_device_button_->setEnabled(
+            !selected_account_device_uid_.isEmpty() && status == "active" && !is_self);
+    });
+    QObject::connect(revoke_device_button_, &QPushButton::clicked, this, [this]() {
+        if (selected_account_device_uid_.isEmpty()) {
+            return;
+        }
+        emit RevokeDeviceRequested(selected_account_device_uid_);
     });
     QObject::connect(apply_audio_button_, &QPushButton::clicked, this, [this]() {
         emit ApplyAudioDevicesRequested(
@@ -211,6 +237,22 @@ void SettingsDialog::BuildMyAccountPage() {
     form->addRow("Connection", connection_status_value_);
     layout->addLayout(form);
 
+    auto* devices_title = new QLabel("Authorized Devices", page);
+    devices_title->setObjectName("conversationSubtitle");
+    layout->addWidget(devices_title);
+
+    account_devices_list_ = new QListWidget(page);
+    account_devices_list_->setObjectName("conversationList");
+    account_devices_list_->setSelectionMode(QAbstractItemView::SingleSelection);
+    account_devices_list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    account_devices_list_->setMinimumHeight(170);
+    layout->addWidget(account_devices_list_);
+
+    revoke_device_button_ = new QPushButton("Kick Selected Device", page);
+    revoke_device_button_->setObjectName("dangerButton");
+    revoke_device_button_->setEnabled(false);
+    layout->addWidget(revoke_device_button_, 0, Qt::AlignLeft);
+
     auto* actions = new QHBoxLayout();
     actions->setSpacing(8);
     copy_id_button_ = new QPushButton("Copy ID", page);
@@ -317,6 +359,17 @@ void SettingsDialog::BuildPrivacyPage() {
     copy_diagnostics_button_ = new QPushButton("Copy Diagnostics", page);
     copy_diagnostics_button_->setObjectName("secondaryButton");
     layout->addWidget(copy_diagnostics_button_, 0, Qt::AlignLeft);
+
+    auto* integrity_title = new QLabel("Integrity Status", page);
+    integrity_title->setObjectName("conversationSubtitle");
+    layout->addWidget(integrity_title);
+
+    integrity_warning_value_ = new QLabel("No integrity warnings observed in this session.", page);
+    integrity_warning_value_->setObjectName("connectionPill");
+    integrity_warning_value_->setProperty("state", "connected");
+    integrity_warning_value_->setWordWrap(true);
+    layout->addWidget(integrity_warning_value_);
+
     layout->addStretch(1);
 
     tabs_stack_->addWidget(page);
@@ -396,6 +449,36 @@ void SettingsDialog::SetDiagnostics(const QString& diagnostics) {
     diagnostics_ = diagnostics;
 }
 
+void SettingsDialog::SetAccountDevices(const std::vector<DeviceOut>& devices, const QString& current_device_uid) {
+    if (account_devices_list_ == nullptr || revoke_device_button_ == nullptr) {
+        return;
+    }
+    current_device_uid_ = current_device_uid.trimmed();
+    selected_account_device_uid_.clear();
+    revoke_device_button_->setEnabled(false);
+
+    const QSignalBlocker blocker(account_devices_list_);
+    account_devices_list_->clear();
+
+    for (const auto& device : devices) {
+        const QString uid = QString::fromStdString(DeviceUid(device));
+        const QString label =
+            QString::fromStdString(device.label).trimmed().isEmpty() ? "(unlabeled)" : QString::fromStdString(device.label).trimmed();
+        const QString status = QString::fromStdString(device.status).trimmed().toLower().isEmpty()
+                                   ? "active"
+                                   : QString::fromStdString(device.status).trimmed().toLower();
+        const QString suffix = uid == current_device_uid_ ? " (this device)" : "";
+
+        auto* row = new QListWidgetItem(account_devices_list_);
+        row->setData(Qt::UserRole, uid);
+        row->setData(Qt::UserRole + 1, status);
+        row->setText(QString("%1 [%2]%3\n%4").arg(label, status, suffix, uid));
+        if (uid == current_device_uid_) {
+            account_devices_list_->setCurrentItem(row);
+        }
+    }
+}
+
 void SettingsDialog::SetAudioDevices(
     const std::vector<AudioDeviceOptionView>& input_devices,
     const std::vector<AudioDeviceOptionView>& output_devices) {
@@ -446,6 +529,21 @@ void SettingsDialog::SetAcceptMessagesFromStrangers(bool enabled) {
     }
     const QSignalBlocker blocker(accept_messages_checkbox_);
     accept_messages_checkbox_->setChecked(enabled);
+}
+
+void SettingsDialog::SetIntegrityWarning(const QString& warning) {
+    if (integrity_warning_value_ == nullptr) {
+        return;
+    }
+    if (warning.trimmed().isEmpty()) {
+        integrity_warning_value_->setText("No integrity warnings observed in this session.");
+        integrity_warning_value_->setProperty("state", "connected");
+    } else {
+        integrity_warning_value_->setText(warning.trimmed());
+        integrity_warning_value_->setProperty("state", "warning");
+    }
+    integrity_warning_value_->style()->unpolish(integrity_warning_value_);
+    integrity_warning_value_->style()->polish(integrity_warning_value_);
 }
 
 bool SettingsDialog::AcceptMessagesFromStrangers() const {

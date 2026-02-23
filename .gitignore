@@ -56,7 +56,9 @@ server/.pytest_tmp/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
 blackwire.db
+server/_write_test.txt
 
 # ------------------------------
 # C++ / CMake / Qt / MSVC

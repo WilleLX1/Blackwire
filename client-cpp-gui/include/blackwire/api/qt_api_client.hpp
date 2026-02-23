@@ -31,10 +31,27 @@ public:
 
     UserOut Me(const std::string& base_url, const std::string& access_token) override;
 
-    DeviceOut RegisterDevice(
+    AuthResponse RegisterDevice(
+        const std::string& base_url,
+        const std::string& bootstrap_token,
+        const DeviceRegisterRequest& request) override;
+
+    AuthResponse BindDevice(
+        const std::string& base_url,
+        const std::string& bootstrap_token,
+        const std::string& device_uid,
+        const std::string& nonce,
+        long long timestamp_ms,
+        const std::string& proof_signature_b64) override;
+
+    std::vector<DeviceOut> ListDevices(
+        const std::string& base_url,
+        const std::string& access_token) override;
+
+    DeviceOut RevokeDevice(
         const std::string& base_url,
         const std::string& access_token,
-        const DeviceRegisterRequest& request) override;
+        const std::string& device_uid) override;
 
     UserDeviceLookup GetUserDevice(
         const std::string& base_url,

@@ -44,6 +44,8 @@ public:
     void Login(const QString& username, const QString& password);
     void Logout();
     void SetupDevice(const QString& label);
+    void LoadAccountDevices();
+    void RevokeDevice(const QString& device_uid);
 
     void LoadConversations();
     void OpenConversationByPeer(const QString& username);
@@ -86,16 +88,20 @@ signals:
     void AudioDevicesChanged(
         const std::vector<AudioDeviceOptionView>& input_devices,
         const std::vector<AudioDeviceOptionView>& output_devices);
+    void AccountDevicesChanged(const std::vector<DeviceOut>& devices);
     void AudioDevicePreferenceChanged(const QString& input_device_id, const QString& output_device_id);
     void CallErrorOccurred(const QString& message);
+    void IntegrityWarningOccurred(const QString& message);
     void ErrorOccurred(const QString& message);
 
 private:
     std::string SecretNamespacePrefix() const;
     std::string SecretNamespaceNeedle() const;
     std::string SecretKey(const std::string& name) const;
+    std::string RequireBootstrapToken();
     std::string RequireAccessToken();
     std::string RequireRefreshToken();
+    void SaveBootstrapToken(const TokenBundle& tokens);
     void SaveTokenPair(const TokenBundle& tokens);
     void RefreshAccessToken();
     void StartRealtime();
@@ -129,7 +135,8 @@ private:
     void ReportCallError(const QString& message);
     std::optional<std::string> FindConversationIdForPeer(const QString& normalized_peer) const;
     std::string ResolveConversationIdForPeer(const QString& normalized_peer);
-    DeviceOut ResolveRecipientDevice(const QString& normalized_peer);
+    std::vector<DeviceOut> ResolveRecipientDevices(const QString& normalized_peer);
+    std::vector<DeviceOut> ResolveOwnActiveDevices();
     void UpsertConversationMeta(
         const std::string& conversation_id,
         const QString& peer_username,
@@ -151,7 +158,7 @@ private:
     bool ws_reauth_in_progress_ = false;
     QString connection_status_ = "Disconnected";
     std::deque<QString> diagnostics_;
-    std::unordered_map<std::string, DeviceOut> peer_device_cache_;
+    std::unordered_map<std::string, std::vector<DeviceOut>> peer_device_cache_;
     std::map<std::string, std::vector<LocalMessage>> pending_request_messages_;
     std::map<std::string, QString> pending_request_senders_;
     CallStateView call_state_;
@@ -162,6 +169,8 @@ private:
 
 Q_DECLARE_METATYPE(blackwire::ConversationListItemView)
 Q_DECLARE_METATYPE(std::vector<blackwire::ConversationListItemView>)
+Q_DECLARE_METATYPE(blackwire::DeviceOut)
+Q_DECLARE_METATYPE(std::vector<blackwire::DeviceOut>)
 Q_DECLARE_METATYPE(blackwire::AudioDeviceOptionView)
 Q_DECLARE_METATYPE(std::vector<blackwire::AudioDeviceOptionView>)
 Q_DECLARE_METATYPE(blackwire::CallStateView)

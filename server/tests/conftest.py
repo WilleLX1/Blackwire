@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.config import reset_settings_cache
 from app.db import reset_engine
+from app.security.tokens_v2 import reset_v2_token_cache
 
 
 @pytest.fixture()
@@ -24,6 +25,7 @@ def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     os.environ["BLACKWIRE_FEDERATION_SIGNING_PRIVATE_KEY_B64"] = ""
 
     reset_settings_cache()
+    reset_v2_token_cache()
     asyncio.run(reset_engine())
 
     from app.main import create_app
@@ -35,3 +37,4 @@ def client(tmp_path: Path) -> Generator[TestClient, None, None]:
 
     asyncio.run(reset_engine())
     reset_settings_cache()
+    reset_v2_token_cache()

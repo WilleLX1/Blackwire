@@ -26,7 +26,7 @@ QString JoinUrl(const std::string& base_url, const QString& path) {
     if (base.endsWith('/')) {
         base.chop(1);
     }
-    return base + "/api/v1" + path;
+    return base + "/api/v2" + path;
 }
 
 bool IsOnionHost(const QString& host) {
@@ -126,16 +126,60 @@ UserOut QtApiClient::Me(const std::string& base_url, const std::string& access_t
     return json.get<UserOut>();
 }
 
-DeviceOut QtApiClient::RegisterDevice(
+AuthResponse QtApiClient::RegisterDevice(
     const std::string& base_url,
-    const std::string& access_token,
+    const std::string& bootstrap_token,
     const DeviceRegisterRequest& request) {
     const nlohmann::json body = request;
     const auto json = RequestJson(
         "POST",
         JoinUrl(base_url, "/devices/register"),
-        QString::fromStdString(access_token),
+        QString::fromStdString(bootstrap_token),
         &body);
+    return json.get<AuthResponse>();
+}
+
+AuthResponse QtApiClient::BindDevice(
+    const std::string& base_url,
+    const std::string& bootstrap_token,
+    const std::string& device_uid,
+    const std::string& nonce,
+    long long timestamp_ms,
+    const std::string& proof_signature_b64) {
+    nlohmann::json body = {
+        {"device_uid", device_uid},
+        {"nonce", nonce},
+        {"timestamp_ms", timestamp_ms},
+        {"proof_signature_b64", proof_signature_b64},
+    };
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, "/auth/bind-device"),
+        QString::fromStdString(bootstrap_token),
+        &body);
+    return json.get<AuthResponse>();
+}
+
+std::vector<DeviceOut> QtApiClient::ListDevices(
+    const std::string& base_url,
+    const std::string& access_token) {
+    const auto json = RequestJson(
+        "GET",
+        JoinUrl(base_url, "/devices"),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<std::vector<DeviceOut>>();
+}
+
+DeviceOut QtApiClient::RevokeDevice(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& device_uid) {
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/devices/%1/revoke").arg(QString::fromStdString(device_uid))),
+        QString::fromStdString(access_token),
+        nullptr);
     return json.get<DeviceOut>();
 }
 
@@ -146,13 +190,17 @@ UserDeviceLookup QtApiClient::GetUserDevice(
     const QString peer = QString::fromStdString(peer_address).trimmed();
     QString endpoint;
     if (peer.contains('@')) {
-        QUrl url(JoinUrl(base_url, "/users/resolve-device"));
+        QUrl url(JoinUrl(base_url, "/users/resolve-devices"));
         QUrlQuery query;
         query.addQueryItem("peer_address", peer);
         url.setQuery(query);
         endpoint = url.toString();
     } else {
-        endpoint = JoinUrl(base_url, QString("/users/%1/device").arg(peer));
+        QUrl url(JoinUrl(base_url, "/users/resolve-devices"));
+        QUrlQuery query;
+        query.addQueryItem("peer_address", QString("%1@local.invalid").arg(peer));
+        url.setQuery(query);
+        endpoint = url.toString();
     }
 
     const auto json = RequestJson(
@@ -207,7 +255,22 @@ std::vector<MessageOut> QtApiClient::ListMessages(
     url.setQuery(query);
 
     const auto json = RequestJson("GET", url.toString(), QString::fromStdString(access_token), nullptr);
-    return json.get<std::vector<MessageOut>>();
+    std::vector<MessageOut> out;
+    if (!json.is_array()) {
+        return out;
+    }
+    for (const auto& item : json) {
+        if (item.contains("message")) {
+            auto message = item.at("message").get<MessageOut>();
+            if (item.contains("envelope_json")) {
+                message.envelope = item.at("envelope_json").get<CipherEnvelope>();
+            }
+            out.push_back(message);
+            continue;
+        }
+        out.push_back(item.get<MessageOut>());
+    }
+    return out;
 }
 
 MessageSendResponse QtApiClient::SendMessage(

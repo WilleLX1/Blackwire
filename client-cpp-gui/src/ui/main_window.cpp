@@ -1,5 +1,7 @@
 #include "blackwire/ui/main_window.hpp"
 
+#include <vector>
+
 #include <QMessageBox>
 #include <QStackedWidget>
 #include <QStatusBar>
@@ -82,11 +84,13 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
 
     connect(chat_widget_, &ChatWidget::SettingsRequested, this, [this]() {
         controller_.LoadAudioDevices();
+        controller_.LoadAccountDevices();
         settings_dialog_->SetIdentity(controller_.UserDisplayId());
         settings_dialog_->SetServerUrl(controller_.BaseUrl());
         settings_dialog_->SetDeviceInfo(controller_.DeviceLabel(), controller_.DeviceId());
         settings_dialog_->SetConnectionStatus(controller_.ConnectionStatus());
         settings_dialog_->SetDiagnostics(controller_.DiagnosticsReport());
+        settings_dialog_->SetIntegrityWarning(last_integrity_warning_);
         settings_dialog_->SetAcceptMessagesFromStrangers(controller_.AcceptMessagesFromStrangers());
         settings_dialog_->exec();
     });
@@ -101,6 +105,17 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
 
     connect(settings_dialog_, &SettingsDialog::AcceptMessagesFromStrangersChanged, this, [this](bool enabled) {
         controller_.SetAcceptMessagesFromStrangers(enabled);
+    });
+
+    connect(settings_dialog_, &SettingsDialog::RevokeDeviceRequested, this, [this](const QString& device_uid) {
+        const auto answer = QMessageBox::question(
+            this,
+            "Kick Device",
+            QString("Revoke device %1? It will be disconnected immediately.").arg(device_uid));
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+        controller_.RevokeDevice(device_uid);
     });
 
     connect(settings_dialog_, &SettingsDialog::LogoutRequested, this, [this]() {
@@ -120,6 +135,9 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
             chat_widget_->SetIdentity(authenticated ? controller_.UserDisplayId() : QString());
             chat_widget_->SetSettingsVisible(authenticated);
             if (!authenticated) {
+                last_integrity_warning_.clear();
+                settings_dialog_->SetIntegrityWarning(last_integrity_warning_);
+                settings_dialog_->SetAccountDevices(std::vector<DeviceOut>{}, QString());
                 login_widget_->SetBaseUrl(controller_.BaseUrl());
                 stack->setCurrentWidget(login_widget_);
                 return;
@@ -224,6 +242,14 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
 
     connect(
         &controller_,
+        &ApplicationController::AccountDevicesChanged,
+        this,
+        [this](const std::vector<DeviceOut>& devices) {
+            settings_dialog_->SetAccountDevices(devices, controller_.DeviceId());
+        });
+
+    connect(
+        &controller_,
         &ApplicationController::AudioDevicePreferenceChanged,
         this,
         [this](const QString& input, const QString& output) {
@@ -233,6 +259,13 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
     connect(&controller_, &ApplicationController::CallErrorOccurred, this, [this](const QString& error) {
         chat_widget_->ShowBanner(error, "warning");
         statusBar()->showMessage(error, 5000);
+    });
+
+    connect(&controller_, &ApplicationController::IntegrityWarningOccurred, this, [this](const QString& warning) {
+        last_integrity_warning_ = warning.trimmed();
+        settings_dialog_->SetIntegrityWarning(last_integrity_warning_);
+        chat_widget_->ShowBanner(last_integrity_warning_, "warning");
+        statusBar()->showMessage(last_integrity_warning_, 7000);
     });
 
     connect(&controller_, &ApplicationController::ErrorOccurred, this, [this, stack](const QString& error) {

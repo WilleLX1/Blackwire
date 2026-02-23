@@ -1,5 +1,7 @@
 #include "blackwire/crypto/sodium_crypto_service.hpp"
 
+#include <iomanip>
+#include <sstream>
 #include <cstring>
 #include <stdexcept>
 
@@ -83,6 +85,60 @@ std::string SodiumCryptoService::DecryptWithPrivate(
     }
 
     return std::string(reinterpret_cast<const char*>(plaintext.data()), plaintext.size());
+}
+
+std::string SodiumCryptoService::SignDetached(
+    const std::string& ed25519_private_key_b64,
+    const std::string& message) {
+    const auto private_key = DecodeBase64(ed25519_private_key_b64);
+    if (private_key.size() != crypto_sign_SECRETKEYBYTES) {
+        throw std::runtime_error("Ed25519 private key has invalid length");
+    }
+
+    unsigned char signature[crypto_sign_BYTES];
+    if (crypto_sign_detached(
+            signature,
+            nullptr,
+            reinterpret_cast<const unsigned char*>(message.data()),
+            message.size(),
+            private_key.data()) != 0) {
+        throw std::runtime_error("Unable to sign payload");
+    }
+
+    return EncodeBase64(signature, crypto_sign_BYTES);
+}
+
+bool SodiumCryptoService::VerifyDetached(
+    const std::string& ed25519_public_key_b64,
+    const std::string& message,
+    const std::string& signature_b64) {
+    const auto public_key = DecodeBase64(ed25519_public_key_b64);
+    const auto signature = DecodeBase64(signature_b64);
+    if (public_key.size() != crypto_sign_PUBLICKEYBYTES || signature.size() != crypto_sign_BYTES) {
+        return false;
+    }
+
+    const int verified = crypto_sign_verify_detached(
+        signature.data(),
+        reinterpret_cast<const unsigned char*>(message.data()),
+        message.size(),
+        public_key.data());
+    return verified == 0;
+}
+
+std::string SodiumCryptoService::Sha256(const std::string& data) {
+    unsigned char digest[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256(
+        digest,
+        reinterpret_cast<const unsigned char*>(data.data()),
+        data.size());
+
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (unsigned char byte : digest) {
+        out << std::setw(2) << static_cast<int>(byte);
+    }
+    return out.str();
 }
 
 std::string SodiumCryptoService::EncodeBase64(const unsigned char* bytes, std::size_t length) {

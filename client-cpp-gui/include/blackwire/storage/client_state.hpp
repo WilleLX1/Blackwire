@@ -46,6 +46,8 @@ struct ClientState {
     std::map<std::string, ConversationMeta> conversation_meta;
     std::map<std::string, std::vector<LocalMessage>> local_messages;
     std::set<std::string> seen_message_ids;
+    std::map<std::string, std::string> pinned_sender_sign_keys_by_device_uid;
+    std::map<std::string, std::string> last_verified_chain_hash_by_conversation_sender;
     AudioPreferences audio_preferences;
     SocialPreferences social_preferences;
     std::set<std::string> blocked_conversation_ids;
@@ -126,6 +128,8 @@ inline void to_json(nlohmann::json& j, const ClientState& v) {
                        {"conversation_meta", v.conversation_meta},
                        {"local_messages", v.local_messages},
                        {"seen_message_ids", v.seen_message_ids},
+                       {"pinned_sender_sign_keys_by_device_uid", v.pinned_sender_sign_keys_by_device_uid},
+                       {"last_verified_chain_hash_by_conversation_sender", v.last_verified_chain_hash_by_conversation_sender},
                        {"audio_preferences", v.audio_preferences},
                        {"social_preferences", v.social_preferences},
                        {"blocked_conversation_ids", v.blocked_conversation_ids}};
@@ -160,6 +164,12 @@ inline void from_json(const nlohmann::json& j, ClientState& v) {
     }
     if (j.contains("seen_message_ids")) {
         j.at("seen_message_ids").get_to(v.seen_message_ids);
+    }
+    if (j.contains("pinned_sender_sign_keys_by_device_uid")) {
+        j.at("pinned_sender_sign_keys_by_device_uid").get_to(v.pinned_sender_sign_keys_by_device_uid);
+    }
+    if (j.contains("last_verified_chain_hash_by_conversation_sender")) {
+        j.at("last_verified_chain_hash_by_conversation_sender").get_to(v.last_verified_chain_hash_by_conversation_sender);
     }
     if (j.contains("audio_preferences")) {
         j.at("audio_preferences").get_to(v.audio_preferences);

@@ -6,6 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app.api import auth, conversations, devices, federation, health, messages, metrics, users
+from app.api_v2 import (
+    auth as auth_v2,
+    conversations as conversations_v2,
+    devices as devices_v2,
+    federation as federation_v2,
+    messages as messages_v2,
+    users as users_v2,
+    ws as ws_v2,
+)
 from app.config import get_settings
 from app.db import get_session_factory, init_engine, init_models
 from app.logging_utils import RequestContextMiddleware, configure_logging
@@ -20,6 +29,7 @@ from app.security.tokens import TokenError, decode_token
 from app.services.call_service import CallProtocolError, call_service
 from app.services.federation_outbox_service import federation_outbox_service
 from app.services.message_service import message_service
+from app.services.message_service_v2 import message_service_v2
 from app.services.queue_worker import queue_cleanup_worker
 from app.services.rate_limit import rate_limiter
 from app.services.server_identity import (
@@ -68,6 +78,12 @@ def create_app() -> FastAPI:
     app.include_router(messages.router, prefix=settings.api_prefix)
     app.include_router(federation.router, prefix=settings.api_prefix)
     app.include_router(metrics.router, prefix=settings.api_prefix)
+    app.include_router(auth_v2.router)
+    app.include_router(devices_v2.router)
+    app.include_router(users_v2.router)
+    app.include_router(conversations_v2.router)
+    app.include_router(messages_v2.router)
+    app.include_router(federation_v2.router)
 
     @app.on_event("startup")
     async def on_startup() -> None:
@@ -96,7 +112,9 @@ def create_app() -> FastAPI:
         async def cleanup_once() -> int:
             session_factory = get_session_factory()
             async with session_factory() as session:
-                return await message_service.expire_old(session)
+                expired_v1 = await message_service.expire_old(session)
+                expired_v2 = await message_service_v2.expire_old(session)
+                return expired_v1 + expired_v2
 
         async def federation_outbox_once() -> int:
             session_factory = get_session_factory()
@@ -249,6 +267,10 @@ def create_app() -> FastAPI:
         finally:
             await call_service.handle_disconnect(user_id)
             await connection_manager.disconnect(user_id=user_id, websocket=websocket)
+
+    @app.websocket("/api/v2/ws")
+    async def websocket_endpoint_v2(websocket: WebSocket) -> None:
+        await ws_v2.websocket_endpoint_v2(websocket)
 
     return app
 

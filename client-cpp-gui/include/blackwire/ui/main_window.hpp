@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QString>
 
 namespace blackwire {
 
@@ -24,6 +25,7 @@ private:
     ChatWidget* chat_widget_;
     SettingsDialog* settings_dialog_;
     QWidget* stacked_container_;
+    QString last_integrity_warning_;
 };
 
 }  // namespace blackwire

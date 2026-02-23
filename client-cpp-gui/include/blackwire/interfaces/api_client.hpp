@@ -41,10 +41,27 @@ public:
 
     virtual UserOut Me(const std::string& base_url, const std::string& access_token) = 0;
 
-    virtual DeviceOut RegisterDevice(
+    virtual AuthResponse RegisterDevice(
+        const std::string& base_url,
+        const std::string& bootstrap_token,
+        const DeviceRegisterRequest& request) = 0;
+
+    virtual AuthResponse BindDevice(
+        const std::string& base_url,
+        const std::string& bootstrap_token,
+        const std::string& device_uid,
+        const std::string& nonce,
+        long long timestamp_ms,
+        const std::string& proof_signature_b64) = 0;
+
+    virtual std::vector<DeviceOut> ListDevices(
+        const std::string& base_url,
+        const std::string& access_token) = 0;
+
+    virtual DeviceOut RevokeDevice(
         const std::string& base_url,
         const std::string& access_token,
-        const DeviceRegisterRequest& request) = 0;
+        const std::string& device_uid) = 0;
 
     virtual UserDeviceLookup GetUserDevice(
         const std::string& base_url,

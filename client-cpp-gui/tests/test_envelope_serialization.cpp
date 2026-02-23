@@ -23,6 +23,31 @@ TEST(EnvelopeSerializationTest, RoundTripPreservesFields) {
     EXPECT_EQ(restored.envelope.client_message_id, request.envelope.client_message_id);
 }
 
+TEST(EnvelopeSerializationTest, V2MessageSendSerializationRoundTrip) {
+    blackwire::MessageSendRequest request;
+    request.conversation_id = "conv-v2";
+    request.client_message_id = "client-v2";
+    request.sent_at_ms = 12345;
+    request.sender_prev_hash = "";
+    request.sender_chain_hash = "abc123";
+
+    blackwire::CipherEnvelope env;
+    env.recipient_user_address = "bob@peer.onion";
+    env.recipient_device_uid = "device-bob";
+    env.ciphertext_b64 = "Zm9v";
+    env.aad_b64.clear();
+    env.signature_b64 = "c2ln";
+    env.sender_device_pubkey = "cHVi";
+    request.envelopes = {env};
+
+    const nlohmann::json json = request;
+    const auto restored = json.get<blackwire::MessageSendRequest>();
+
+    ASSERT_EQ(restored.envelopes.size(), 1);
+    EXPECT_EQ(restored.client_message_id, "client-v2");
+    EXPECT_EQ(restored.envelopes.front().recipient_device_uid, "device-bob");
+}
+
 TEST(EnvelopeSerializationTest, UserOutParsesCanonicalIdentityWhenPresent) {
     const auto json = nlohmann::json::parse(
         R"({"id":"u1","username":"alice","created_at":"2026-02-17T00:00:00Z","user_address":"alice@peer.onion","home_server_onion":"peer.onion"})");

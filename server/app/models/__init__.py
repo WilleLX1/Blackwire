@@ -5,6 +5,8 @@ from app.models.federation_nonce_replay import FederationNonceReplay
 from app.models.federation_outbox import FederationOutbox
 from app.models.federation_peer import FederationPeer
 from app.models.message import Message
+from app.models.message_device_copy import MessageDeviceCopy
+from app.models.message_event import MessageEvent
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
@@ -14,6 +16,8 @@ __all__ = [
     "ActiveDevice",
     "Conversation",
     "Message",
+    "MessageEvent",
+    "MessageDeviceCopy",
     "DeliveryQueue",
     "FederationPeer",
     "FederationNonceReplay",

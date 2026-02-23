@@ -34,6 +34,7 @@ class DeviceService:
             label=payload.label,
             ik_ed25519_pub=payload.ik_ed25519_pub,
             enc_x25519_pub=payload.enc_x25519_pub,
+            status="active",
         )
         session.add(device)
         await session.flush()
@@ -45,6 +46,7 @@ class DeviceService:
             old_device = (await session.execute(old_device_stmt)).scalar_one_or_none()
             if old_device is not None:
                 old_device.revoked_at = datetime.now(UTC)
+                old_device.status = "revoked"
             current_active.device_id = device.id
             current_active.updated_at = datetime.now(UTC)
         else:
@@ -58,7 +60,11 @@ class DeviceService:
         stmt = (
             select(Device)
             .join(ActiveDevice, ActiveDevice.device_id == Device.id)
-            .where(ActiveDevice.user_id == user_id, Device.revoked_at.is_(None))
+            .where(
+                ActiveDevice.user_id == user_id,
+                Device.revoked_at.is_(None),
+                Device.status == "active",
+            )
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 

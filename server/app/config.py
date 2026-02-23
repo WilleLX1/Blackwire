@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 15
     refresh_token_days: int = 30
+    jwt_private_key_pem: str = ""
+    jwt_public_key_pem: str = ""
+    v2_bootstrap_token_seconds: int = 120
+    v2_access_token_minutes: int = 10
+    v2_refresh_token_days: int = 30
+    v2_bind_request_skew_seconds: int = 300
 
     message_ttl_days: int = 7
     queue_cleanup_interval_seconds: int = 60
@@ -32,6 +38,7 @@ class Settings(BaseSettings):
     tor_enabled: bool = False
     tor_socks5_url: str = "socks5h://127.0.0.1:9050"
     tor_hs_hostname_file: str = "/var/lib/tor/hidden_service/hostname"
+    tor_hs_ed25519_secret_key_file: str = "/var/lib/tor/hidden_service/hs_ed25519_secret_key"
     tor_hs_hostname_wait_seconds: int = 45
 
     federation_server_onion: str = "local.invalid"
