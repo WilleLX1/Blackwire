@@ -5,6 +5,21 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+class RatchetHeaderV2(BaseModel):
+    v: str = Field(default="dr_v1", min_length=3, max_length=16)
+    dh_pub: str = Field(min_length=16, max_length=256)
+    n: int = Field(ge=0)
+    pn: int = Field(ge=0)
+
+
+class RatchetInitV2(BaseModel):
+    scheme: str = Field(default="x3dh_v1", min_length=4, max_length=32)
+    sender_ephemeral_pub: str = Field(min_length=16, max_length=256)
+    signed_prekey_id: int | None = Field(default=None, ge=1)
+    one_time_prekey_id: int | None = Field(default=None, ge=1)
+    opk_missing: bool = False
+
+
 class SignedEnvelopeV2(BaseModel):
     recipient_user_address: str
     recipient_device_uid: str
@@ -12,6 +27,8 @@ class SignedEnvelopeV2(BaseModel):
     aad_b64: str | None = None
     signature_b64: str
     sender_device_pubkey: str
+    ratchet_header: RatchetHeaderV2 | None = None
+    ratchet_init: RatchetInitV2 | None = None
 
     @field_validator("ciphertext_b64")
     @classmethod
@@ -36,6 +53,7 @@ class SignedEnvelopeV2(BaseModel):
 
 class MessageSendRequestV2(BaseModel):
     conversation_id: str
+    encryption_mode: str = Field(default="sealedbox_v0_2a", max_length=32)
     client_message_id: str = Field(min_length=8, max_length=128)
     sent_at_ms: int = Field(ge=0)
     sender_prev_hash: str = Field(max_length=128, default="")
@@ -52,6 +70,7 @@ class MessageEventOutV2(BaseModel):
     sender_address: str
     sender_device_uid: str
     sender_device_pubkey: str
+    encryption_mode: str = "sealedbox_v0_2a"
     client_message_id: str
     sent_at_ms: int
     sender_prev_hash: str
@@ -77,4 +96,3 @@ class MessageSendResponseV2(BaseModel):
 
 class MessageAckRequestV2(BaseModel):
     copy_id: str
-

@@ -58,6 +58,16 @@ public:
         const std::string& access_token,
         const std::string& peer_address) override;
 
+    ResolvePrekeysResponse ResolvePrekeys(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& peer_address) override;
+
+    PrekeyUploadResponse UploadPrekeys(
+        const std::string& base_url,
+        const std::string& access_token,
+        const PrekeyUploadRequest& request) override;
+
     ConversationOut CreateDm(
         const std::string& base_url,
         const std::string& access_token,

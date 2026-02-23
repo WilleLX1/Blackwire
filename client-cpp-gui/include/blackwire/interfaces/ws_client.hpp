@@ -18,6 +18,9 @@ public:
     using CallEndedHandler = std::function<void(const WsEventCallEnded&)>;
     using CallAudioHandler = std::function<void(const WsEventCallAudio&)>;
     using CallErrorHandler = std::function<void(const WsEventCallError&)>;
+    using CallWebRtcOfferHandler = std::function<void(const WsEventCallWebRtcOffer&)>;
+    using CallWebRtcAnswerHandler = std::function<void(const WsEventCallWebRtcAnswer&)>;
+    using CallWebRtcIceHandler = std::function<void(const WsEventCallWebRtcIce&)>;
     using ErrorHandler = std::function<void(const std::string&)>;
     using StatusHandler = std::function<void(bool)>;
 
@@ -33,6 +36,9 @@ public:
         CallEndedHandler on_call_ended,
         CallAudioHandler on_call_audio,
         CallErrorHandler on_call_error,
+        CallWebRtcOfferHandler on_call_webrtc_offer,
+        CallWebRtcAnswerHandler on_call_webrtc_answer,
+        CallWebRtcIceHandler on_call_webrtc_ice,
         ErrorHandler on_error,
         StatusHandler on_status) = 0;
     virtual void Connect(const std::string& base_url, const std::string& access_token) = 0;
@@ -43,6 +49,9 @@ public:
     virtual void SendCallReject(const VoiceCallReject& reject) = 0;
     virtual void SendCallEnd(const VoiceCallEnd& end) = 0;
     virtual void SendCallAudioChunk(const VoiceAudioChunk& chunk) = 0;
+    virtual void SendCallWebRtcOffer(const VoiceCallWebRtcOffer& offer) = 0;
+    virtual void SendCallWebRtcAnswer(const VoiceCallWebRtcAnswer& answer) = 0;
+    virtual void SendCallWebRtcIce(const VoiceCallWebRtcIce& ice) = 0;
 };
 
 }  // namespace blackwire

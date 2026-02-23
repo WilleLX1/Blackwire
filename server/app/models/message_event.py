@@ -25,6 +25,7 @@ class MessageEvent(Base):
     sender_device_pubkey: Mapped[str] = mapped_column(String(256))
     client_message_id: Mapped[str] = mapped_column(String(64), index=True)
     sent_at_ms: Mapped[int] = mapped_column(BigInteger, index=True)
+    encryption_mode: Mapped[str] = mapped_column(String(32), index=True, default="sealedbox_v0_2a")
     sender_prev_hash: Mapped[str] = mapped_column(String(128), default="")
     sender_chain_hash: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

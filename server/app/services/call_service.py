@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import binascii
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Literal
@@ -19,6 +20,9 @@ from app.schemas.call import (
     CallEndRequest,
     CallOfferRequest,
     CallRejectRequest,
+    CallWebRtcAnswerRequest,
+    CallWebRtcIceRequest,
+    CallWebRtcOfferRequest,
 )
 from app.schemas.federation import (
     FederationCallAcceptRequest,
@@ -26,6 +30,11 @@ from app.schemas.federation import (
     FederationCallEndRequest,
     FederationCallOfferRequest,
     FederationCallRejectRequest,
+)
+from app.schemas.v2_federation import (
+    FederationCallWebRtcAnswerRequestV2,
+    FederationCallWebRtcIceRequestV2,
+    FederationCallWebRtcOfferRequestV2,
 )
 from app.services.conversation_service import conversation_service
 from app.services.federation_client import FederationClientError, federation_client
@@ -85,6 +94,24 @@ class CallService:
         self._calls: dict[str, CallSession] = {}
         self._user_to_call: dict[str, str] = {}
         self._lock = asyncio.Lock()
+
+    def _webrtc_metadata(self) -> dict:
+        if not self.settings.enable_webrtc_v2b2:
+            return {}
+        metadata: dict = {
+            "call_schema_version": 1,
+            "call_mode": "webrtc",
+            "max_participants": 2,
+        }
+        try:
+            parsed = json.loads(self.settings.webrtc_ice_servers_json) if self.settings.webrtc_ice_servers_json else []
+        except json.JSONDecodeError:
+            parsed = []
+        if isinstance(parsed, list):
+            metadata["ice_servers"] = parsed
+        else:
+            metadata["ice_servers"] = []
+        return metadata
 
     async def _local_address_for_user_id(self, session: AsyncSession, user_id: str) -> str:
         stmt = select(User).where(User.id == user_id)
@@ -297,6 +324,7 @@ class CallService:
                             "conversation_id": call.conversation_id,
                             "peer_user_id": call.callee_user_id or "",
                             "peer_user_address": call.callee_address,
+                            **self._webrtc_metadata(),
                         },
                     ),
                     (
@@ -307,6 +335,7 @@ class CallService:
                             "conversation_id": call.conversation_id,
                             "peer_user_id": call.caller_user_id or "",
                             "peer_user_address": call.caller_address,
+                            **self._webrtc_metadata(),
                         },
                     ),
                 ]
@@ -330,6 +359,7 @@ class CallService:
                             "conversation_id": call.conversation_id,
                             "peer_user_id": "",
                             "peer_user_address": call.caller_address,
+                            **self._webrtc_metadata(),
                         },
                     )
                 ]
@@ -492,6 +522,8 @@ class CallService:
                 pass
 
     async def audio(self, user_id: str, payload: CallAudioRequest) -> None:
+        if not self.settings.enable_legacy_call_audio_ws:
+            raise CallProtocolError("audio_deprecated", "WS audio transport is disabled; use WebRTC")
         try:
             pcm = base64.b64decode(payload.pcm_b64.encode("utf-8"), validate=True)
         except binascii.Error as exc:
@@ -562,6 +594,213 @@ class CallService:
                 )
             except FederationClientError as exc:
                 raise CallProtocolError("federation_audio_failed", exc.detail) from exc
+
+    def _validate_webrtc_enabled(self) -> None:
+        if not self.settings.enable_webrtc_v2b2:
+            raise CallProtocolError("webrtc_disabled", "WebRTC signaling is disabled")
+
+    @staticmethod
+    def _validate_call_mode(call_mode: str, max_participants: int) -> None:
+        normalized_mode = (call_mode or "").strip().lower()
+        if normalized_mode != "webrtc":
+            raise CallProtocolError("invalid_call_mode", "call_mode must be 'webrtc'")
+        if max_participants != 2:
+            raise CallProtocolError("invalid_participant_limit", "Only 1:1 calls are supported in this release")
+
+    async def webrtc_offer(self, user_id: str, payload: CallWebRtcOfferRequest) -> None:
+        self._validate_webrtc_enabled()
+        self._validate_call_mode(payload.call_mode, payload.max_participants)
+        await self._relay_webrtc_signaling(
+            user_id=user_id,
+            call_id=payload.call_id,
+            event_type="call.webrtc.offer",
+            local_payload={
+                "type": "call.webrtc.offer",
+                "call_id": payload.call_id,
+                "sdp": payload.sdp,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+            },
+            federation_path="/api/v2/federation/calls/webrtc-offer",
+            federation_payload={
+                "call_id": payload.call_id,
+                "sdp": payload.sdp,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+            },
+        )
+
+    async def webrtc_answer(self, user_id: str, payload: CallWebRtcAnswerRequest) -> None:
+        self._validate_webrtc_enabled()
+        self._validate_call_mode(payload.call_mode, payload.max_participants)
+        await self._relay_webrtc_signaling(
+            user_id=user_id,
+            call_id=payload.call_id,
+            event_type="call.webrtc.answer",
+            local_payload={
+                "type": "call.webrtc.answer",
+                "call_id": payload.call_id,
+                "sdp": payload.sdp,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+            },
+            federation_path="/api/v2/federation/calls/webrtc-answer",
+            federation_payload={
+                "call_id": payload.call_id,
+                "sdp": payload.sdp,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+            },
+        )
+
+    async def webrtc_ice(self, user_id: str, payload: CallWebRtcIceRequest) -> None:
+        self._validate_webrtc_enabled()
+        self._validate_call_mode(payload.call_mode, payload.max_participants)
+        await self._relay_webrtc_signaling(
+            user_id=user_id,
+            call_id=payload.call_id,
+            event_type="call.webrtc.ice",
+            local_payload={
+                "type": "call.webrtc.ice",
+                "call_id": payload.call_id,
+                "candidate": payload.candidate,
+                "sdp_mid": payload.sdp_mid,
+                "sdp_mline_index": payload.sdp_mline_index,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+            },
+            federation_path="/api/v2/federation/calls/webrtc-ice",
+            federation_payload={
+                "call_id": payload.call_id,
+                "candidate": payload.candidate,
+                "sdp_mid": payload.sdp_mid,
+                "sdp_mline_index": payload.sdp_mline_index,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+            },
+        )
+
+    async def _relay_webrtc_signaling(
+        self,
+        *,
+        user_id: str,
+        call_id: str,
+        event_type: str,
+        local_payload: dict,
+        federation_path: str,
+        federation_payload: dict,
+    ) -> None:
+        local_target: str | None = None
+        relay_data: tuple[str, str, str] | None = None
+
+        async with self._lock:
+            call = self._calls.get(call_id)
+            if call is None:
+                raise CallProtocolError("call_not_found", "Call session not found")
+            if call.state != "active":
+                raise CallProtocolError("call_not_active", "Call is not active")
+            if not call.has_participant(user_id):
+                raise CallProtocolError("forbidden", "Not a participant in this call")
+
+            if call.direction == "local":
+                local_target = call.peer_of(user_id)
+            elif call.direction == "federated_outbound":
+                parsed_peer = parse_peer_address_with_policy(call.callee_address, self.settings.tor_enabled)
+                relay_data = (parsed_peer.server_onion, call.caller_address, call.callee_address)
+            else:
+                parsed_peer = parse_peer_address_with_policy(call.caller_address, self.settings.tor_enabled)
+                relay_data = (parsed_peer.server_onion, call.callee_address, call.caller_address)
+
+        if local_target is not None:
+            await connection_manager.send_to_user(local_target, local_payload)
+            return
+
+        if relay_data is not None:
+            peer_onion, from_user_address, to_user_address = relay_data
+            payload_json = {
+                "relay_id": str(uuid4()),
+                "from_user_address": from_user_address,
+                "to_user_address": to_user_address,
+            }
+            payload_json.update(federation_payload)
+            try:
+                await federation_client.post_signed(peer_onion, federation_path, payload_json)
+            except FederationClientError as exc:
+                raise CallProtocolError(f"{event_type}.relay_failed", exc.detail) from exc
+
+    async def relay_webrtc_offer(self, payload: FederationCallWebRtcOfferRequestV2) -> None:
+        self._validate_webrtc_enabled()
+        self._validate_call_mode(payload.call_mode, payload.max_participants)
+        await self._relay_webrtc_event_to_local(
+            call_id=payload.call_id,
+            payload={
+                "type": "call.webrtc.offer",
+                "call_id": payload.call_id,
+                "sdp": payload.sdp,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+                "from_user_address": payload.from_user_address,
+            },
+        )
+
+    async def relay_webrtc_answer(self, payload: FederationCallWebRtcAnswerRequestV2) -> None:
+        self._validate_webrtc_enabled()
+        self._validate_call_mode(payload.call_mode, payload.max_participants)
+        await self._relay_webrtc_event_to_local(
+            call_id=payload.call_id,
+            payload={
+                "type": "call.webrtc.answer",
+                "call_id": payload.call_id,
+                "sdp": payload.sdp,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+                "from_user_address": payload.from_user_address,
+            },
+        )
+
+    async def relay_webrtc_ice(self, payload: FederationCallWebRtcIceRequestV2) -> None:
+        self._validate_webrtc_enabled()
+        self._validate_call_mode(payload.call_mode, payload.max_participants)
+        await self._relay_webrtc_event_to_local(
+            call_id=payload.call_id,
+            payload={
+                "type": "call.webrtc.ice",
+                "call_id": payload.call_id,
+                "candidate": payload.candidate,
+                "sdp_mid": payload.sdp_mid,
+                "sdp_mline_index": payload.sdp_mline_index,
+                "call_schema_version": payload.call_schema_version,
+                "call_mode": payload.call_mode,
+                "max_participants": payload.max_participants,
+                "from_user_address": payload.from_user_address,
+            },
+        )
+
+    async def _relay_webrtc_event_to_local(self, call_id: str, payload: dict) -> None:
+        local_target: str | None = None
+        async with self._lock:
+            call = self._calls.get(call_id)
+            if call is None:
+                raise CallProtocolError("call_not_found", "Call session not found")
+            if call.state != "active":
+                raise CallProtocolError("call_not_active", "Call is not active")
+            if call.direction == "federated_outbound":
+                local_target = call.caller_user_id
+            elif call.direction == "federated_inbound":
+                local_target = call.callee_user_id
+            else:
+                raise CallProtocolError("invalid_state", "Local call cannot consume federated WebRTC relay")
+        if local_target:
+            await connection_manager.send_to_user(local_target, payload)
+
     async def relay_offer(self, session: AsyncSession, payload: FederationCallOfferRequest) -> None:
         local_user = await self._local_user_for_address(session, payload.to_user_address)
         if not await connection_manager.has_user(local_user.id):
@@ -637,6 +876,7 @@ class CallService:
                     "conversation_id": conversation_id,
                     "peer_user_id": "",
                     "peer_user_address": peer_address,
+                    **self._webrtc_metadata(),
                 },
             )
 
@@ -687,6 +927,8 @@ class CallService:
             )
 
     async def relay_audio(self, payload: FederationCallAudioRequest) -> None:
+        if not self.settings.enable_legacy_call_audio_ws:
+            raise CallProtocolError("audio_deprecated", "WS audio transport is disabled; use WebRTC")
         local_target: str | None = None
         try:
             pcm = base64.b64decode(payload.pcm_b64.encode("utf-8"), validate=True)

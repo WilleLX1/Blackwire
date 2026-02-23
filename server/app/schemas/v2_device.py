@@ -18,6 +18,7 @@ class DeviceOutV2(BaseModel):
     pub_sign_key: str
     pub_dh_key: str
     status: str
+    supported_message_modes: list[str] = Field(default_factory=list)
     created_at: datetime
     last_seen_at: datetime
     revoked_at: datetime | None
@@ -32,4 +33,3 @@ class UserDeviceLookupV2(BaseModel):
 class DeviceResolveListV2(BaseModel):
     peer_address: str
     devices: list[DeviceOutV2]
-

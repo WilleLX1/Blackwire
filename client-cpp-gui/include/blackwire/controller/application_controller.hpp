@@ -106,6 +106,8 @@ private:
     void RefreshAccessToken();
     void StartRealtime();
     void StopRealtime();
+    void EncryptPlaintextCacheInState();
+    void DecryptPlaintextCacheInState();
     void PersistState();
     void RefreshConversationList();
     QString RenderMessage(const MessageOut& message, const std::string& plaintext) const;
@@ -114,6 +116,9 @@ private:
     bool IsWebSocketAuthError(const std::string& error) const;
     void ReauthenticateWebSocket();
     void RecordDiagnostic(const QString& line);
+    void UploadCurrentDevicePrekeys();
+    bool PreferRatchetV2b1() const;
+    bool DeviceSupportsMessageMode(const DeviceOut& device, const std::string& mode) const;
     bool ConversationExists(const std::string& conversation_id) const;
     const ConversationOut* FindConversation(const std::string& conversation_id) const;
     void RevealConversation(const std::string& conversation_id, bool select_conversation);

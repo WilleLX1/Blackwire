@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -11,6 +12,7 @@ from app.api_v2 import (
     conversations as conversations_v2,
     devices as devices_v2,
     federation as federation_v2,
+    keys as keys_v2,
     messages as messages_v2,
     users as users_v2,
     ws as ws_v2,
@@ -80,6 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(metrics.router, prefix=settings.api_prefix)
     app.include_router(auth_v2.router)
     app.include_router(devices_v2.router)
+    app.include_router(keys_v2.router)
     app.include_router(users_v2.router)
     app.include_router(conversations_v2.router)
     app.include_router(messages_v2.router)
@@ -91,6 +94,17 @@ def create_app() -> FastAPI:
             raise RuntimeError("BLACKWIRE_JWT_SECRET_KEY must be at least 32 bytes")
         if settings.environment != "dev" and "*" in settings.allow_origins:
             raise RuntimeError("Wildcard CORS origin is not allowed outside dev")
+        if settings.enable_webrtc_v2b2 and not settings.webrtc_ice_servers_json.strip():
+            raise RuntimeError(
+                "BLACKWIRE_WEBRTC_ICE_SERVERS_JSON is required when BLACKWIRE_ENABLE_WEBRTC_V2B2=true"
+            )
+        if settings.enable_webrtc_v2b2 and settings.webrtc_ice_servers_json.strip():
+            try:
+                parsed_ice = json.loads(settings.webrtc_ice_servers_json)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("BLACKWIRE_WEBRTC_ICE_SERVERS_JSON must be valid JSON") from exc
+            if not isinstance(parsed_ice, list) or not parsed_ice:
+                raise RuntimeError("BLACKWIRE_WEBRTC_ICE_SERVERS_JSON must be a non-empty JSON array")
 
         initialize_server_identity(settings)
         server_onion = get_server_onion()

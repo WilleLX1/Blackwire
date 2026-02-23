@@ -6,6 +6,7 @@ import orjson
 from app.config import get_settings
 from app.schemas.device import UserDeviceLookup
 from app.schemas.v2_device import UserDeviceLookupV2
+from app.schemas.v2_prekey import ResolvePrekeysResponseV2
 from app.services.federation_security import federation_security_service
 from app.services.peer_address import is_onion_authority
 
@@ -73,6 +74,30 @@ class FederationClient:
         if response.status_code >= 400:
             raise FederationClientError(response.status_code, response.text or "Remote device lookup failed")
         return UserDeviceLookupV2.model_validate(response.json())
+
+    async def get_remote_user_prekeys_v2(self, peer_onion: str, username: str) -> ResolvePrekeysResponseV2:
+        peer = peer_onion.strip().lower()
+        normalized_username = username.strip().lower()
+        if not is_onion_authority(peer):
+            raise FederationClientError(400, "Invalid remote server onion authority")
+        if not normalized_username:
+            raise FederationClientError(400, "Invalid remote username")
+
+        async with await self._build_http_client() as client:
+            try:
+                response = await client.get(
+                    "http://"
+                    f"{peer}/api/v2/federation/users/{quote(normalized_username, safe='')}/prekeys"
+                )
+            except httpx.HTTPError as exc:
+                raise FederationClientError(
+                    502,
+                    f"Remote prekey lookup failed for {normalized_username}@{peer}",
+                ) from exc
+
+        if response.status_code >= 400:
+            raise FederationClientError(response.status_code, response.text or "Remote prekey lookup failed")
+        return ResolvePrekeysResponseV2.model_validate(response.json())
 
     async def post_signed(
         self,

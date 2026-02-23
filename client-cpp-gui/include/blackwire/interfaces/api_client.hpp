@@ -68,6 +68,16 @@ public:
         const std::string& access_token,
         const std::string& peer_address) = 0;
 
+    virtual ResolvePrekeysResponse ResolvePrekeys(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& peer_address) = 0;
+
+    virtual PrekeyUploadResponse UploadPrekeys(
+        const std::string& base_url,
+        const std::string& access_token,
+        const PrekeyUploadRequest& request) = 0;
+
     virtual ConversationOut CreateDm(
         const std::string& base_url,
         const std::string& access_token,

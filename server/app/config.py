@@ -31,6 +31,12 @@ class Settings(BaseSettings):
 
     max_ciphertext_bytes: int = 65536
     max_aad_bytes: int = 4096
+    enable_ratchet_v2b1: bool = False
+    ratchet_require_for_local: bool = False
+    ratchet_require_for_federation: bool = False
+    enable_webrtc_v2b2: bool = False
+    webrtc_ice_servers_json: str = ""
+    enable_legacy_call_audio_ws: bool = True
     voice_call_ring_timeout_seconds: int = 30
     voice_audio_max_chunk_bytes: int = 4096
     voice_audio_min_interval_ms: int = 8

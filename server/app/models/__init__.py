@@ -7,6 +7,10 @@ from app.models.federation_peer import FederationPeer
 from app.models.message import Message
 from app.models.message_device_copy import MessageDeviceCopy
 from app.models.message_event import MessageEvent
+from app.models.device_signed_prekey import DeviceSignedPrekey
+from app.models.device_one_time_prekey import DeviceOneTimePrekey
+from app.models.ratchet_session import RatchetSession
+from app.models.ratchet_skipped_key import RatchetSkippedKey
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
@@ -18,6 +22,10 @@ __all__ = [
     "Message",
     "MessageEvent",
     "MessageDeviceCopy",
+    "DeviceSignedPrekey",
+    "DeviceOneTimePrekey",
+    "RatchetSession",
+    "RatchetSkippedKey",
     "DeliveryQueue",
     "FederationPeer",
     "FederationNonceReplay",

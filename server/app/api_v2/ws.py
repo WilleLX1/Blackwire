@@ -13,6 +13,9 @@ from app.schemas.call import (
     CallEndRequest,
     CallOfferRequest,
     CallRejectRequest,
+    CallWebRtcAnswerRequest,
+    CallWebRtcIceRequest,
+    CallWebRtcOfferRequest,
 )
 from app.security.tokens_v2 import TokenErrorV2, decode_token
 from app.services.call_service import CallProtocolError, call_service
@@ -141,11 +144,44 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
                 continue
 
             if msg_type == "call.audio":
+                if not call_service.settings.enable_legacy_call_audio_ws:
+                    await send_call_error("audio_deprecated", "WS audio transport is disabled; use WebRTC")
+                    continue
                 try:
                     payload_call = CallAudioRequest.model_validate(incoming)
                     await call_service.audio(user_id, payload_call)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_audio", str(exc))
+                except CallProtocolError as exc:
+                    await send_call_error(exc.code, exc.detail)
+                continue
+
+            if msg_type == "call.webrtc.offer":
+                try:
+                    payload_call = CallWebRtcOfferRequest.model_validate(incoming)
+                    await call_service.webrtc_offer(user_id, payload_call)
+                except ValidationError as exc:
+                    await send_call_error("invalid_call_webrtc_offer", str(exc))
+                except CallProtocolError as exc:
+                    await send_call_error(exc.code, exc.detail)
+                continue
+
+            if msg_type == "call.webrtc.answer":
+                try:
+                    payload_call = CallWebRtcAnswerRequest.model_validate(incoming)
+                    await call_service.webrtc_answer(user_id, payload_call)
+                except ValidationError as exc:
+                    await send_call_error("invalid_call_webrtc_answer", str(exc))
+                except CallProtocolError as exc:
+                    await send_call_error(exc.code, exc.detail)
+                continue
+
+            if msg_type == "call.webrtc.ice":
+                try:
+                    payload_call = CallWebRtcIceRequest.model_validate(incoming)
+                    await call_service.webrtc_ice(user_id, payload_call)
+                except ValidationError as exc:
+                    await send_call_error("invalid_call_webrtc_ice", str(exc))
                 except CallProtocolError as exc:
                     await send_call_error(exc.code, exc.detail)
                 continue
@@ -156,7 +192,8 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
                     "code": "unsupported_event",
                     "detail": (
                         "Supported client events: "
-                        "message.ack, call.offer, call.accept, call.reject, call.end, call.audio"
+                        "message.ack, call.offer, call.accept, call.reject, call.end, "
+                        "call.audio, call.webrtc.offer, call.webrtc.answer, call.webrtc.ice"
                     ),
                 }
             )

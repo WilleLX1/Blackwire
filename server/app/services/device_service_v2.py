@@ -19,8 +19,13 @@ class DeviceServiceV2:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    @staticmethod
-    def _to_device_out(device: Device) -> DeviceOutV2:
+    def supported_message_modes(self) -> list[str]:
+        modes = ["sealedbox_v0_2a"]
+        if self.settings.enable_ratchet_v2b1:
+            modes.append("ratchet_v0_2b1")
+        return modes
+
+    def _to_device_out(self, device: Device) -> DeviceOutV2:
         return DeviceOutV2(
             device_uid=device.id,
             user_id=device.user_id,
@@ -28,6 +33,7 @@ class DeviceServiceV2:
             pub_sign_key=device.ik_ed25519_pub,
             pub_dh_key=device.enc_x25519_pub,
             status=device.status,
+            supported_message_modes=self.supported_message_modes(),
             created_at=device.created_at,
             last_seen_at=device.last_seen_at,
             revoked_at=device.revoked_at,
@@ -140,4 +146,3 @@ class DeviceServiceV2:
 
 
 device_service_v2 = DeviceServiceV2()
-

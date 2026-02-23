@@ -135,6 +135,9 @@ void QtWsClient::SetHandlers(
     CallEndedHandler on_call_ended,
     CallAudioHandler on_call_audio,
     CallErrorHandler on_call_error,
+    CallWebRtcOfferHandler on_call_webrtc_offer,
+    CallWebRtcAnswerHandler on_call_webrtc_answer,
+    CallWebRtcIceHandler on_call_webrtc_ice,
     ErrorHandler on_error,
     StatusHandler on_status) {
     on_message_ = std::move(on_message);
@@ -146,6 +149,9 @@ void QtWsClient::SetHandlers(
     on_call_ended_ = std::move(on_call_ended);
     on_call_audio_ = std::move(on_call_audio);
     on_call_error_ = std::move(on_call_error);
+    on_call_webrtc_offer_ = std::move(on_call_webrtc_offer);
+    on_call_webrtc_answer_ = std::move(on_call_webrtc_answer);
+    on_call_webrtc_ice_ = std::move(on_call_webrtc_ice);
     on_error_ = std::move(on_error);
     on_status_ = std::move(on_status);
 }
@@ -196,6 +202,24 @@ void QtWsClient::SendCallEnd(const VoiceCallEnd& end) {
 void QtWsClient::SendCallAudioChunk(const VoiceAudioChunk& chunk) {
     nlohmann::json payload = chunk;
     payload["type"] = "call.audio";
+    socket_.sendTextMessage(QString::fromStdString(payload.dump()));
+}
+
+void QtWsClient::SendCallWebRtcOffer(const VoiceCallWebRtcOffer& offer) {
+    nlohmann::json payload = offer;
+    payload["type"] = "call.webrtc.offer";
+    socket_.sendTextMessage(QString::fromStdString(payload.dump()));
+}
+
+void QtWsClient::SendCallWebRtcAnswer(const VoiceCallWebRtcAnswer& answer) {
+    nlohmann::json payload = answer;
+    payload["type"] = "call.webrtc.answer";
+    socket_.sendTextMessage(QString::fromStdString(payload.dump()));
+}
+
+void QtWsClient::SendCallWebRtcIce(const VoiceCallWebRtcIce& ice) {
+    nlohmann::json payload = ice;
+    payload["type"] = "call.webrtc.ice";
     socket_.sendTextMessage(QString::fromStdString(payload.dump()));
 }
 
@@ -293,6 +317,30 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
             } else if (on_error_) {
                 const std::string detail = event.detail.empty() ? "Voice call error" : event.detail;
                 on_error_(detail);
+            }
+            return;
+        }
+
+        if (type == "call.webrtc.offer") {
+            WsEventCallWebRtcOffer event = payload.get<WsEventCallWebRtcOffer>();
+            if (on_call_webrtc_offer_) {
+                on_call_webrtc_offer_(event);
+            }
+            return;
+        }
+
+        if (type == "call.webrtc.answer") {
+            WsEventCallWebRtcAnswer event = payload.get<WsEventCallWebRtcAnswer>();
+            if (on_call_webrtc_answer_) {
+                on_call_webrtc_answer_(event);
+            }
+            return;
+        }
+
+        if (type == "call.webrtc.ice") {
+            WsEventCallWebRtcIce event = payload.get<WsEventCallWebRtcIce>();
+            if (on_call_webrtc_ice_) {
+                on_call_webrtc_ice_(event);
             }
             return;
         }

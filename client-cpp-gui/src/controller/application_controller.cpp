@@ -5,6 +5,7 @@
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <QDateTime>
 #include <QDir>
@@ -28,6 +29,14 @@ constexpr int kMaxDiagnostics = 200;
 
 QString SanitizeDiagnosticText(QString text) {
     return SanitizeDiagnosticsText(text);
+}
+
+bool EnvFlagEnabled(const char* name, bool default_value) {
+    const QString raw = qEnvironmentVariable(name).trimmed().toLower();
+    if (raw.isEmpty()) {
+        return default_value;
+    }
+    return raw == "1" || raw == "true" || raw == "yes" || raw == "on";
 }
 
 std::string CanonicalMessageSignature(
@@ -64,6 +73,14 @@ std::string AggregateChainHash(
     const std::string aggregate_hash = crypto.Sha256(aggregate);
     return crypto.Sha256(
         sender_prev_hash + "\n" + client_message_id + "\n" + std::to_string(sent_at_ms) + "\n" + aggregate_hash);
+}
+
+std::string CanonicalSignedPrekeyString(
+    const std::string& device_uid,
+    int key_id,
+    const std::string& pub_x25519_b64,
+    const std::string& expires_at) {
+    return "SIGNED_PREKEY\n" + device_uid + "\n" + std::to_string(key_id) + "\n" + pub_x25519_b64 + "\n" + expires_at;
 }
 
 }  // namespace
@@ -323,6 +340,25 @@ ApplicationController::ApplicationController(
                     event.peer_user_address.empty() ? event.peer_user_id : event.peer_user_address),
                 QString());
 
+            const bool webrtc_enabled = EnvFlagEnabled("BLACKWIRE_ENABLE_WEBRTC_V2B2", false) ||
+                                        event.call_mode == "webrtc";
+            const bool legacy_audio_enabled = EnvFlagEnabled("BLACKWIRE_ENABLE_LEGACY_CALL_AUDIO_WS", true);
+            if (webrtc_enabled) {
+                VoiceCallWebRtcOffer offer;
+                offer.call_id = event.call_id;
+                offer.sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Blackwire\r\nt=0 0\r\nm=audio 9 RTP/AVP 0\r\n";
+                ws_client_.SendCallWebRtcOffer(offer);
+                call_state_.reason = "WebRTC negotiating";
+                if (event.ice_servers.is_array()) {
+                    RecordDiagnostic(
+                        QString("webrtc ice_servers=%1").arg(static_cast<int>(event.ice_servers.size())));
+                }
+                EmitCallState();
+                if (!legacy_audio_enabled) {
+                    return;
+                }
+            }
+
             QString warning;
             QString error;
             if (!StartAudioEngineForActiveCall(&warning, &error)) {
@@ -399,6 +435,34 @@ ApplicationController::ApplicationController(
             }
             ReportCallError(message);
         },
+        [this](const WsEventCallWebRtcOffer& event) {
+            RecordDiagnostic(
+                QString("received webrtc offer call_id=%1").arg(QString::fromStdString(event.call_id)));
+            if (IsCallState("active") && call_state_.call_id == QString::fromStdString(event.call_id)) {
+                VoiceCallWebRtcAnswer answer;
+                answer.call_id = event.call_id;
+                answer.sdp = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Blackwire\r\nt=0 0\r\nm=audio 9 RTP/AVP 0\r\n";
+                ws_client_.SendCallWebRtcAnswer(answer);
+                call_state_.reason = "WebRTC negotiating";
+                EmitCallState();
+            }
+        },
+        [this](const WsEventCallWebRtcAnswer& event) {
+            RecordDiagnostic(
+                QString("received webrtc answer call_id=%1").arg(QString::fromStdString(event.call_id)));
+            if (IsCallState("active") && call_state_.call_id == QString::fromStdString(event.call_id)) {
+                call_state_.reason = "WebRTC connected";
+                EmitCallState();
+            }
+        },
+        [this](const WsEventCallWebRtcIce& event) {
+            RecordDiagnostic(
+                QString("received webrtc ice call_id=%1").arg(QString::fromStdString(event.call_id)));
+            if (IsCallState("active") && call_state_.call_id == QString::fromStdString(event.call_id)) {
+                call_state_.reason = "WebRTC negotiating";
+                EmitCallState();
+            }
+        },
         [this](const std::string& error) {
             if (IsWebSocketAuthError(error)) {
                 ReauthenticateWebSocket();
@@ -426,6 +490,7 @@ void ApplicationController::Initialize() {
         if (state_.base_url.empty()) {
             state_.base_url = "http://localhost:8000";
         }
+        DecryptPlaintextCacheInState();
 
         TransitionCallState("idle", QString(), QString(), QString(), QString());
         LoadAudioDevices();
@@ -535,6 +600,8 @@ void ApplicationController::Login(const QString& username, const QString& passwo
                     timestamp_ms,
                     signature);
                 SaveTokenPair(bound.tokens);
+                DecryptPlaintextCacheInState();
+                UploadCurrentDevicePrekeys();
                 PersistState();
                 LoadConversations();
                 StartRealtime();
@@ -618,6 +685,7 @@ void ApplicationController::SetupDevice(const QString& label) {
             throw std::runtime_error(error);
         }
 
+        UploadCurrentDevicePrekeys();
         PersistState();
         RecordDiagnostic(QString("device setup complete label=%1").arg(label));
         emit DeviceStateChanged(true);
@@ -789,6 +857,7 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
 
         std::vector<LocalMessage> rebuilt;
         rebuilt.reserve(remote_messages.size());
+        std::unordered_set<std::string> rebuilt_ids;
 
         std::string error;
         const auto private_key = secret_store_.GetSecret(SecretKey("enc_private"), &error);
@@ -800,6 +869,7 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                     existing->second.plaintext = ExtractLegacyPlaintext(QString::fromStdString(existing->second.rendered_text)).toStdString();
                 }
                 rebuilt.push_back(existing->second);
+                rebuilt_ids.insert(existing->second.id);
                 state_.MarkMessageSeen(message.id);
                 continue;
             }
@@ -825,9 +895,42 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
             local.rendered_text = RenderMessage(message, plaintext).toStdString();
             local.plaintext = plaintext;
             rebuilt.push_back(local);
+            rebuilt_ids.insert(local.id);
 
             state_.MarkMessageSeen(message.id);
         }
+
+        if (existing_it != state_.local_messages.end()) {
+            for (const auto& existing : existing_it->second) {
+                if (rebuilt_ids.contains(existing.id)) {
+                    continue;
+                }
+                // Server listing is device-copy scoped, so self-sent messages may be absent.
+                if (existing.sender_user_id == state_.user.id) {
+                    rebuilt.push_back(existing);
+                }
+            }
+        }
+
+        auto parse_time = [](const std::string& value) {
+            const QString iso = QString::fromStdString(value);
+            QDateTime parsed = QDateTime::fromString(iso, Qt::ISODateWithMs);
+            if (!parsed.isValid()) {
+                parsed = QDateTime::fromString(iso, Qt::ISODate);
+            }
+            return parsed;
+        };
+        std::stable_sort(rebuilt.begin(), rebuilt.end(), [&parse_time](const LocalMessage& lhs, const LocalMessage& rhs) {
+            const QDateTime lhs_time = parse_time(lhs.created_at);
+            const QDateTime rhs_time = parse_time(rhs.created_at);
+            if (lhs_time.isValid() && rhs_time.isValid() && lhs_time != rhs_time) {
+                return lhs_time < rhs_time;
+            }
+            if (lhs.created_at != rhs.created_at) {
+                return lhs.created_at < rhs.created_at;
+            }
+            return lhs.id < rhs.id;
+        });
 
         state_.local_messages[selected_conversation_id_] = rebuilt;
         if (!rebuilt.empty()) {
@@ -903,8 +1006,64 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
                 .arg(QString::fromStdString(state_.user.username).trimmed().toLower(), home_server)
                 .toStdString();
 
+        bool use_ratchet_mode = PreferRatchetV2b1() && !recipient_devices.empty();
+        if (use_ratchet_mode) {
+            for (const auto& device : recipient_devices) {
+                if (!DeviceSupportsMessageMode(device, "ratchet_v0_2b1")) {
+                    use_ratchet_mode = false;
+                    break;
+                }
+            }
+        }
+        if (use_ratchet_mode) {
+            for (const auto& device : own_devices) {
+                const std::string target_uid = device.device_uid.empty() ? device.id : device.device_uid;
+                if (target_uid.empty() || target_uid == state_.device.id) {
+                    continue;
+                }
+                if (!DeviceSupportsMessageMode(device, "ratchet_v0_2b1")) {
+                    use_ratchet_mode = false;
+                    break;
+                }
+            }
+        }
+
+        std::unordered_map<std::string, ResolvedPrekeyDevice> prekeys_by_device;
+        if (use_ratchet_mode) {
+            try {
+                const auto prekey_op = [this, &peer_address]() {
+                    return api_client_.ResolvePrekeys(state_.base_url, RequireAccessToken(), peer_address);
+                };
+                const auto prekeys =
+                    CallWithAuthRetryOnce<ResolvePrekeysResponse>(prekey_op, [this]() { RefreshAccessToken(); });
+                for (const auto& item : prekeys.devices) {
+                    prekeys_by_device[item.device_uid] = item;
+                }
+                for (const auto& device : recipient_devices) {
+                    const std::string target_uid = device.device_uid.empty() ? device.id : device.device_uid;
+                    const auto it = prekeys_by_device.find(target_uid);
+                    if (it == prekeys_by_device.end() || !it->second.signed_prekey.has_value()) {
+                        use_ratchet_mode = false;
+                        break;
+                    }
+                }
+                if (!use_ratchet_mode) {
+                    RecordDiagnostic("ratchet fallback: missing signed prekeys for one or more recipient devices");
+                }
+            } catch (const std::exception& ex) {
+                use_ratchet_mode = false;
+                RecordDiagnostic(QString("ratchet fallback: prekey resolve failed (%1)").arg(ex.what()));
+            }
+        }
+
         MessageSendRequest request;
         request.conversation_id = conversation_id;
+        request.encryption_mode = use_ratchet_mode ? "ratchet_v0_2b1" : "sealedbox_v0_2a";
+        if (use_ratchet_mode) {
+            RecordDiagnostic("message send mode=ratchet_v0_2b1");
+        } else if (PreferRatchetV2b1()) {
+            RecordDiagnostic("message send mode=sealedbox_v0_2a (fallback)");
+        }
         request.client_message_id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
         request.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
         const std::string sender_chain_key = conversation_id + "|" + state_.device.id;
@@ -934,6 +1093,31 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
                 crypto_.EncryptForRecipient(device.enc_x25519_pub, message_text.toStdString());
             pending_env.envelope.aad_b64.clear();
             pending_env.envelope.sender_device_pubkey = state_.device.ik_ed25519_pub;
+            if (use_ratchet_mode) {
+                pending_env.envelope.ratchet_header = nlohmann::json{
+                    {"v", "dr_v1"},
+                    {"dh_pub", state_.device.enc_x25519_pub},
+                    {"n", 0},
+                    {"pn", 0},
+                };
+                const auto prekey_it = prekeys_by_device.find(target_uid);
+                if (prekey_it != prekeys_by_device.end()) {
+                    nlohmann::json init = {
+                        {"scheme", "x3dh_v1"},
+                        {"sender_ephemeral_pub", state_.device.enc_x25519_pub},
+                        {"opk_missing", prekey_it->second.opk_missing},
+                    };
+                    if (prekey_it->second.signed_prekey.has_value()) {
+                        init["signed_prekey_id"] = prekey_it->second.signed_prekey->key_id;
+                    }
+                    if (prekey_it->second.one_time_prekey.has_value()) {
+                        init["one_time_prekey_id"] = prekey_it->second.one_time_prekey->key_id;
+                    } else {
+                        init["one_time_prekey_id"] = nullptr;
+                    }
+                    pending_env.envelope.ratchet_init = init;
+                }
+            }
             const QByteArray ciphertext_bytes = QByteArray::fromBase64(
                 QByteArray::fromStdString(pending_env.envelope.ciphertext_b64));
             pending_env.ciphertext_hash = crypto_.Sha256(ciphertext_bytes.toStdString());
@@ -956,6 +1140,15 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
                 crypto_.EncryptForRecipient(device.enc_x25519_pub, message_text.toStdString());
             pending_env.envelope.aad_b64.clear();
             pending_env.envelope.sender_device_pubkey = state_.device.ik_ed25519_pub;
+            if (use_ratchet_mode) {
+                pending_env.envelope.ratchet_header = nlohmann::json{
+                    {"v", "dr_v1"},
+                    {"dh_pub", state_.device.enc_x25519_pub},
+                    {"n", 0},
+                    {"pn", 0},
+                    {"self_mirror", true},
+                };
+            }
             const QByteArray ciphertext_bytes = QByteArray::fromBase64(
                 QByteArray::fromStdString(pending_env.envelope.ciphertext_b64));
             pending_env.ciphertext_hash = crypto_.Sha256(ciphertext_bytes.toStdString());
@@ -1513,7 +1706,57 @@ void ApplicationController::StopRealtime() {
     connection_status_ = "Disconnected";
 }
 
+void ApplicationController::EncryptPlaintextCacheInState() {
+    if (!state_.has_device || state_.device.enc_x25519_pub.empty()) {
+        return;
+    }
+
+    for (auto& [conversation_id, thread] : state_.local_messages) {
+        (void)conversation_id;
+        for (auto& message : thread) {
+            if (message.plaintext.empty()) {
+                continue;
+            }
+            try {
+                message.plaintext_cache_b64 = crypto_.EncryptForRecipient(
+                    state_.device.enc_x25519_pub,
+                    message.plaintext);
+            } catch (const std::exception&) {
+                message.plaintext_cache_b64.clear();
+            }
+        }
+    }
+}
+
+void ApplicationController::DecryptPlaintextCacheInState() {
+    if (!state_.has_device) {
+        return;
+    }
+    std::string error;
+    const auto private_key = secret_store_.GetSecret(SecretKey("enc_private"), &error);
+    if (!private_key.has_value()) {
+        return;
+    }
+
+    for (auto& [conversation_id, thread] : state_.local_messages) {
+        (void)conversation_id;
+        for (auto& message : thread) {
+            if (!message.plaintext.empty() || message.plaintext_cache_b64.empty()) {
+                continue;
+            }
+            try {
+                message.plaintext = crypto_.DecryptWithPrivate(
+                    private_key.value(),
+                    message.plaintext_cache_b64);
+            } catch (const std::exception&) {
+                message.plaintext.clear();
+            }
+        }
+    }
+}
+
 void ApplicationController::PersistState() {
+    EncryptPlaintextCacheInState();
     state_store_.Save(state_);
 }
 
@@ -1635,6 +1878,70 @@ void ApplicationController::RecordDiagnostic(const QString& line) {
     while (static_cast<int>(diagnostics_.size()) > kMaxDiagnostics) {
         diagnostics_.pop_front();
     }
+}
+
+void ApplicationController::UploadCurrentDevicePrekeys() {
+    if (!state_.has_user || !state_.has_device) {
+        return;
+    }
+
+    std::string error;
+    const auto ik_private = secret_store_.GetSecret(SecretKey("ik_private"), &error);
+    if (!ik_private.has_value()) {
+        RecordDiagnostic("prekey upload skipped: device signing key unavailable");
+        return;
+    }
+
+    if (state_.device.enc_x25519_pub.empty()) {
+        RecordDiagnostic("prekey upload skipped: device DH public key missing");
+        return;
+    }
+
+    const int signed_prekey_id = 1;
+    const QString expires_qt = QDateTime::currentDateTimeUtc().addDays(30).toString("yyyy-MM-ddTHH:mm:ss+00:00");
+    const std::string expires_at = expires_qt.toStdString();
+    const std::string canonical = CanonicalSignedPrekeyString(
+        state_.device.id,
+        signed_prekey_id,
+        state_.device.enc_x25519_pub,
+        expires_at);
+    const std::string signature = crypto_.SignDetached(ik_private.value(), canonical);
+
+    PrekeyUploadRequest request;
+    request.signed_prekey.key_id = signed_prekey_id;
+    request.signed_prekey.pub_x25519_b64 = state_.device.enc_x25519_pub;
+    request.signed_prekey.sig_by_device_sign_key_b64 = signature;
+    request.signed_prekey.expires_at = expires_at;
+
+    try {
+        const auto op = [this, &request]() {
+            return api_client_.UploadPrekeys(state_.base_url, RequireAccessToken(), request);
+        };
+        const auto response = CallWithAuthRetryOnce<PrekeyUploadResponse>(op, [this]() { RefreshAccessToken(); });
+        RecordDiagnostic(
+            QString("prekeys uploaded signed_key_id=%1 accepted_opk=%2")
+                .arg(response.uploaded_signed_prekey_key_id)
+                .arg(response.accepted_one_time_prekeys));
+    } catch (const std::exception& ex) {
+        RecordDiagnostic(QString("prekey upload failed: %1").arg(ex.what()));
+    }
+}
+
+bool ApplicationController::PreferRatchetV2b1() const {
+    return EnvFlagEnabled("BLACKWIRE_PREFER_RATCHET_V2B1", true);
+}
+
+bool ApplicationController::DeviceSupportsMessageMode(const DeviceOut& device, const std::string& mode) const {
+    if (mode.empty()) {
+        return false;
+    }
+    if (device.supported_message_modes.empty()) {
+        return mode == "sealedbox_v0_2a";
+    }
+    return std::find(
+               device.supported_message_modes.begin(),
+               device.supported_message_modes.end(),
+               mode) != device.supported_message_modes.end();
 }
 
 bool ApplicationController::ConversationExists(const std::string& conversation_id) const {

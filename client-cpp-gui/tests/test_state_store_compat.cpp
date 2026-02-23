@@ -11,6 +11,7 @@ TEST(StateCompatTest, LoadsLegacyLocalMessageWithoutPlaintext) {
     const auto message = json.get<blackwire::LocalMessage>();
     EXPECT_EQ(message.id, "m1");
     EXPECT_EQ(message.plaintext, "");
+    EXPECT_EQ(message.plaintext_cache_b64, "");
 }
 
 TEST(StateCompatTest, DoesNotPersistLocalMessagePlaintextToDisk) {
@@ -24,9 +25,19 @@ TEST(StateCompatTest, DoesNotPersistLocalMessagePlaintextToDisk) {
 
     const nlohmann::json json = message;
     EXPECT_FALSE(json.contains("plaintext"));
+    EXPECT_TRUE(json.contains("plaintext_cache_b64"));
 
     const auto roundtrip = json.get<blackwire::LocalMessage>();
     EXPECT_TRUE(roundtrip.plaintext.empty());
+}
+
+TEST(StateCompatTest, LoadsEncryptedPlaintextCacheWithoutPlaintext) {
+    const auto json = nlohmann::json::parse(
+        R"({"id":"m3","conversation_id":"c3","sender_user_id":"u3","created_at":"2026-02-14T12:00:00Z","rendered_text":"[2026] Me: encrypted","plaintext_cache_b64":"Zm9v"})");
+
+    const auto message = json.get<blackwire::LocalMessage>();
+    EXPECT_EQ(message.plaintext, "");
+    EXPECT_EQ(message.plaintext_cache_b64, "Zm9v");
 }
 
 TEST(StateCompatTest, LoadsLegacyClientStateWithoutAudioPreferences) {

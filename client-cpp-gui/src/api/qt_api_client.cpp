@@ -211,6 +211,37 @@ UserDeviceLookup QtApiClient::GetUserDevice(
     return json.get<UserDeviceLookup>();
 }
 
+ResolvePrekeysResponse QtApiClient::ResolvePrekeys(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& peer_address) {
+    const QString peer = QString::fromStdString(peer_address).trimmed();
+    QUrl url(JoinUrl(base_url, "/users/resolve-prekeys"));
+    QUrlQuery query;
+    query.addQueryItem("peer_address", peer);
+    url.setQuery(query);
+
+    const auto json = RequestJson(
+        "GET",
+        url.toString(),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<ResolvePrekeysResponse>();
+}
+
+PrekeyUploadResponse QtApiClient::UploadPrekeys(
+    const std::string& base_url,
+    const std::string& access_token,
+    const PrekeyUploadRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, "/keys/prekeys/upload"),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<PrekeyUploadResponse>();
+}
+
 ConversationOut QtApiClient::CreateDm(
     const std::string& base_url,
     const std::string& access_token,

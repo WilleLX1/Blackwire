@@ -18,6 +18,7 @@ struct LocalMessage {
     std::string created_at;
     std::string rendered_text;
     std::string plaintext;
+    std::string plaintext_cache_b64;
 };
 
 struct ConversationMeta {
@@ -63,7 +64,9 @@ inline void to_json(nlohmann::json& j, const LocalMessage& v) {
                        {"conversation_id", v.conversation_id},
                        {"sender_user_id", v.sender_user_id},
                        {"created_at", v.created_at},
-                       {"rendered_text", v.rendered_text}};
+                       {"rendered_text", v.rendered_text},
+                       {"plaintext_cache_b64", v.plaintext_cache_b64.empty() ? nlohmann::json(nullptr)
+                                                                             : nlohmann::json(v.plaintext_cache_b64)}};
 }
 
 inline void to_json(nlohmann::json& j, const ConversationMeta& v) {
@@ -84,6 +87,11 @@ inline void from_json(const nlohmann::json& j, LocalMessage& v) {
     v.rendered_text = "[encrypted message]";
     // Never deserialize historical plaintext from disk into runtime state.
     v.plaintext.clear();
+    if (j.contains("plaintext_cache_b64") && !j.at("plaintext_cache_b64").is_null()) {
+        v.plaintext_cache_b64 = j.value("plaintext_cache_b64", "");
+    } else {
+        v.plaintext_cache_b64.clear();
+    }
 }
 
 inline void from_json(const nlohmann::json& j, ConversationMeta& v) {

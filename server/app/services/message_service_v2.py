@@ -26,6 +26,9 @@ from app.services.peer_address import parse_peer_address_with_policy
 from app.services.server_identity import get_server_onion, server_address_for_username
 from app.ws.manager import connection_manager
 
+SEALED_MODE = "sealedbox_v0_2a"
+RATCHET_MODE = "ratchet_v0_2b1"
+
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -84,6 +87,46 @@ class MessageServiceV2:
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="AAD is too large",
             )
+
+    @staticmethod
+    def _validate_encryption_mode(mode: str) -> str:
+        normalized = (mode or SEALED_MODE).strip().lower()
+        if normalized not in {SEALED_MODE, RATCHET_MODE}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported encryption_mode")
+        return normalized
+
+    def _enforce_encryption_policy(self, conversation_kind: str, encryption_mode: str) -> None:
+        if encryption_mode == RATCHET_MODE and not self.settings.enable_ratchet_v2b1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="ratchet_v0_2b1 is disabled on this server",
+            )
+
+        if conversation_kind == "local" and self.settings.ratchet_require_for_local and encryption_mode != RATCHET_MODE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ratchet mode is required for local delivery",
+            )
+        if conversation_kind == "remote" and self.settings.ratchet_require_for_federation and encryption_mode != RATCHET_MODE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Ratchet mode is required for federation delivery",
+            )
+
+    @staticmethod
+    def _validate_mode_envelope_shape(encryption_mode: str, envelope: SignedEnvelopeV2) -> None:
+        if encryption_mode == RATCHET_MODE:
+            if envelope.ratchet_header is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="ratchet_header is required for ratchet_v0_2b1",
+                )
+        else:
+            if envelope.ratchet_header is not None or envelope.ratchet_init is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="ratchet envelope fields are only allowed for ratchet_v0_2b1",
+                )
 
     def _verify_signature(
         self,
@@ -198,6 +241,7 @@ class MessageServiceV2:
                 "sender_address": event.sender_address,
                 "sender_device_uid": event.sender_device_uid,
                 "sender_device_pubkey": event.sender_device_pubkey,
+                "encryption_mode": event.encryption_mode,
                 "client_message_id": event.client_message_id,
                 "sent_at_ms": event.sent_at_ms,
                 "sender_prev_hash": event.sender_prev_hash,
@@ -248,6 +292,22 @@ class MessageServiceV2:
                 detail="sender_prev_hash does not match latest chain value",
             )
 
+    async def _has_prior_sender_event(
+        self,
+        session: AsyncSession,
+        conversation_id: str,
+        sender_device_uid: str,
+    ) -> bool:
+        stmt = (
+            select(MessageEvent.id)
+            .where(
+                MessageEvent.conversation_id == conversation_id,
+                MessageEvent.sender_device_uid == sender_device_uid,
+            )
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none() is not None
+
     async def send_message(
         self,
         session: AsyncSession,
@@ -259,6 +319,8 @@ class MessageServiceV2:
         if conversation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
         conversation_service.ensure_membership(conversation, sender.id)
+        encryption_mode = self._validate_encryption_mode(payload.encryption_mode)
+        self._enforce_encryption_policy(conversation.kind, encryption_mode)
 
         duplicate_stmt = select(MessageEvent).where(
             MessageEvent.sender_device_uid == sender_device.id,
@@ -267,6 +329,7 @@ class MessageServiceV2:
         duplicate = (await session.execute(duplicate_stmt)).scalar_one_or_none()
         if duplicate is not None:
             return duplicate, True
+        had_prior_event = await self._has_prior_sender_event(session, conversation.id, sender_device.id)
 
         sender_address = server_address_for_username(sender.username)
         expected_targets = await self._expected_targets_for_conversation(session, conversation, sender, sender_device.id)
@@ -283,6 +346,7 @@ class MessageServiceV2:
         envelope_hash_material: list[str] = []
         envelopes_by_target: dict[tuple[str, str], SignedEnvelopeV2] = {}
         for envelope in payload.envelopes:
+            self._validate_mode_envelope_shape(encryption_mode, envelope)
             if envelope.sender_device_pubkey != sender_device.ik_ed25519_pub:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -315,6 +379,7 @@ class MessageServiceV2:
             sender_device_pubkey=sender_device.ik_ed25519_pub,
             client_message_id=payload.client_message_id,
             sent_at_ms=payload.sent_at_ms,
+            encryption_mode=encryption_mode,
             sender_prev_hash=payload.sender_prev_hash,
             sender_chain_hash=payload.sender_chain_hash,
         )
@@ -335,6 +400,8 @@ class MessageServiceV2:
                         "aad_b64": envelope.aad_b64,
                         "signature_b64": envelope.signature_b64,
                         "sender_device_pubkey": envelope.sender_device_pubkey,
+                        "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
+                        "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
                         "recipient_user_id": "",
                     }
                 )
@@ -351,6 +418,8 @@ class MessageServiceV2:
                     "aad_b64": envelope.aad_b64,
                     "signature_b64": envelope.signature_b64,
                     "sender_device_pubkey": envelope.sender_device_pubkey,
+                    "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
+                    "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
                 },
                 status="pending",
                 expires_at=datetime.now(UTC) + timedelta(days=self.settings.message_ttl_days),
@@ -361,6 +430,12 @@ class MessageServiceV2:
         await session.commit()
         await session.refresh(message_event)
         await metrics.inc("messages.v2.sent")
+        if encryption_mode == RATCHET_MODE:
+            await metrics.inc("messages.v2b1.mode.ratchet.sent")
+            if not had_prior_event:
+                await metrics.inc("ratchet.session.established")
+        elif self.settings.enable_ratchet_v2b1:
+            await metrics.inc("messages.v2b1.mode.sealedbox.fallback")
 
         if local_copies:
             await self._deliver_local_copies(session, local_copies, message_event)
@@ -372,6 +447,7 @@ class MessageServiceV2:
                 "sender_address": sender_address,
                 "sender_device_uid": sender_device.id,
                 "sender_user_id": sender.id,
+                "encryption_mode": encryption_mode,
                 "client_message_id": payload.client_message_id,
                 "sent_at_ms": payload.sent_at_ms,
                 "sender_prev_hash": payload.sender_prev_hash,
@@ -486,6 +562,8 @@ class MessageServiceV2:
     ) -> tuple[MessageEvent, bool]:
         if not payload.envelopes:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Relay payload has no envelopes")
+        encryption_mode = self._validate_encryption_mode(payload.encryption_mode)
+        self._enforce_encryption_policy("remote", encryption_mode)
 
         duplicate_stmt = select(MessageEvent).where(
             MessageEvent.sender_device_uid == payload.sender_device_uid,
@@ -494,6 +572,8 @@ class MessageServiceV2:
         duplicate = (await session.execute(duplicate_stmt)).scalar_one_or_none()
         if duplicate is not None:
             return duplicate, True
+        # Ratchet sessions are tracked by (conversation, sender_device_uid) lifecycle.
+        had_prior_event = False
 
         # All relay envelopes must be addressed to the same local user address in v0.2a.
         first_address = payload.envelopes[0].recipient_user_address.strip().lower()
@@ -511,10 +591,12 @@ class MessageServiceV2:
             recipient_user,
             payload.sender_address,
         )
+        had_prior_event = await self._has_prior_sender_event(session, conversation.id, payload.sender_device_uid)
         await self._validate_chain(
             session,
             MessageSendRequestV2(
                 conversation_id=conversation.id,
+                encryption_mode=encryption_mode,
                 client_message_id=payload.client_message_id,
                 sent_at_ms=payload.sent_at_ms,
                 sender_prev_hash=payload.sender_prev_hash,
@@ -527,6 +609,8 @@ class MessageServiceV2:
                         aad_b64=envelope.aad_b64,
                         signature_b64=envelope.signature_b64,
                         sender_device_pubkey=envelope.sender_device_pubkey,
+                        ratchet_header=envelope.ratchet_header,
+                        ratchet_init=envelope.ratchet_init,
                     )
                     for envelope in payload.envelopes
                 ],
@@ -557,10 +641,14 @@ class MessageServiceV2:
                 aad_b64=envelope.aad_b64,
                 signature_b64=envelope.signature_b64,
                 sender_device_pubkey=envelope.sender_device_pubkey,
+                ratchet_header=envelope.ratchet_header,
+                ratchet_init=envelope.ratchet_init,
             )
+            self._validate_mode_envelope_shape(encryption_mode, signed_env)
             ciphertext_hash, aad_hash = self._verify_signature(
                 payload=MessageSendRequestV2(
                     conversation_id=conversation.id,
+                    encryption_mode=encryption_mode,
                     client_message_id=payload.client_message_id,
                     sent_at_ms=payload.sent_at_ms,
                     sender_prev_hash=payload.sender_prev_hash,
@@ -584,6 +672,8 @@ class MessageServiceV2:
                     "aad_b64": envelope.aad_b64,
                     "signature_b64": envelope.signature_b64,
                     "sender_device_pubkey": envelope.sender_device_pubkey,
+                    "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
+                    "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
                 },
                 status="pending",
                 expires_at=datetime.now(UTC) + timedelta(days=self.settings.message_ttl_days),
@@ -608,6 +698,7 @@ class MessageServiceV2:
             sender_device_pubkey=payload.envelopes[0].sender_device_pubkey,
             client_message_id=payload.client_message_id,
             sent_at_ms=payload.sent_at_ms,
+            encryption_mode=encryption_mode,
             sender_prev_hash=payload.sender_prev_hash,
             sender_chain_hash=payload.sender_chain_hash,
         )
@@ -620,6 +711,12 @@ class MessageServiceV2:
         await session.refresh(event)
 
         await self._deliver_local_copies(session, local_copies, event)
+        if encryption_mode == RATCHET_MODE:
+            await metrics.inc("messages.v2b1.mode.ratchet.recv")
+            if not had_prior_event:
+                await metrics.inc("ratchet.session.established")
+        elif self.settings.enable_ratchet_v2b1:
+            await metrics.inc("messages.v2b1.mode.sealedbox.fallback")
         return event, False
 
 

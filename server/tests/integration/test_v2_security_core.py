@@ -2,12 +2,14 @@ import base64
 import hashlib
 import time
 import uuid
+from datetime import datetime
 from typing import Any
 
 from nacl import encoding, public, signing
 
 from app.services.auth_service_v2 import canonical_bind_device_string
 from app.services.message_service_v2 import canonical_message_signature_string
+from app.services.prekey_service_v2 import canonical_signed_prekey_string
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -239,3 +241,97 @@ def test_v2_multi_device_signed_fanout_and_ack(client) -> None:
     assert duplicate.status_code == 200
     assert duplicate.json()["duplicate"] is True
 
+
+def test_v2_prekey_upload_and_resolve(client) -> None:
+    alice_register = _register_v2_user(client, "alice_v2_prekeys")
+    bob_register = _register_v2_user(client, "bob_v2_prekeys")
+
+    alice_device = _new_device_material("alice-prekey-device")
+    bob_device = _new_device_material("bob-prekey-device")
+
+    alice_tokens = _register_device_v2(client, alice_register["tokens"]["bootstrap_token"], alice_device)["tokens"]
+    bob_tokens = _register_device_v2(client, bob_register["tokens"]["bootstrap_token"], bob_device)["tokens"]
+
+    expires_at = "2030-01-01T00:00:00+00:00"
+    signed_prekey_pub = alice_device["dh_pk_b64"]
+    canonical = canonical_signed_prekey_string(
+        alice_tokens["device_uid"],
+        1,
+        signed_prekey_pub,
+        datetime.fromisoformat(expires_at),
+    )
+    signature_b64 = _b64(alice_device["sign_sk"].sign(canonical).signature)
+
+    upload = client.post(
+        "/api/v2/keys/prekeys/upload",
+        headers=_auth_header(alice_tokens["access_token"]),
+        json={
+            "signed_prekey": {
+                "key_id": 1,
+                "pub_x25519_b64": signed_prekey_pub,
+                "sig_by_device_sign_key_b64": signature_b64,
+                "expires_at": expires_at,
+            },
+            "one_time_prekeys": [],
+        },
+    )
+    assert upload.status_code == 200, upload.text
+
+    resolve = client.get(
+        "/api/v2/users/resolve-prekeys",
+        headers=_auth_header(bob_tokens["access_token"]),
+        params={"peer_address": "alice_v2_prekeys@local.invalid"},
+    )
+    assert resolve.status_code == 200, resolve.text
+    body = resolve.json()
+    assert body["username"] == "alice_v2_prekeys"
+    assert len(body["devices"]) == 1
+    assert body["devices"][0]["signed_prekey"]["key_id"] == 1
+    assert body["devices"][0]["signed_prekey"]["pub_x25519_b64"] == signed_prekey_pub
+
+
+def test_v2_ratchet_send_rejected_when_feature_disabled(client) -> None:
+    alice_register = _register_v2_user(client, "alice_v2_ratchet_off")
+    bob_register = _register_v2_user(client, "bob_v2_ratchet_off")
+    alice_device = _new_device_material("alice-ratchet-off")
+    bob_device = _new_device_material("bob-ratchet-off")
+
+    alice_tokens = _register_device_v2(client, alice_register["tokens"]["bootstrap_token"], alice_device)["tokens"]
+    _register_device_v2(client, bob_register["tokens"]["bootstrap_token"], bob_device)
+
+    dm = client.post(
+        "/api/v2/conversations/dm",
+        headers=_auth_header(alice_tokens["access_token"]),
+        json={"peer_username": "bob_v2_ratchet_off"},
+    )
+    assert dm.status_code == 200, dm.text
+    conversation_id = dm.json()["id"]
+
+    client_message_id = str(uuid.uuid4())
+    sent_at_ms = int(time.time() * 1000)
+    payload = {
+        "conversation_id": conversation_id,
+        "encryption_mode": "ratchet_v0_2b1",
+        "client_message_id": client_message_id,
+        "sent_at_ms": sent_at_ms,
+        "sender_prev_hash": "",
+        "sender_chain_hash": "f" * 64,
+        "envelopes": [
+            {
+                "recipient_user_address": "bob_v2_ratchet_off@local.invalid",
+                "recipient_device_uid": "missing-device",
+                "ciphertext_b64": _b64(b"hello"),
+                "aad_b64": None,
+                "signature_b64": _b64(b"x" * 64),
+                "sender_device_pubkey": alice_device["sign_pk_b64"],
+                "ratchet_header": {"v": "dr_v1", "dh_pub": alice_device["dh_pk_b64"], "n": 0, "pn": 0},
+            }
+        ],
+    }
+    response = client.post(
+        "/api/v2/messages/send",
+        headers=_auth_header(alice_tokens["access_token"]),
+        json=payload,
+    )
+    assert response.status_code == 400
+    assert "disabled" in response.text.lower()

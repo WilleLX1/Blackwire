@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,6 +48,7 @@ struct DeviceOut {
     std::string ik_ed25519_pub;
     std::string enc_x25519_pub;
     std::string status;
+    std::vector<std::string> supported_message_modes;
     std::string last_seen_at;
     std::string revoked_at;
     std::string created_at;
@@ -82,6 +84,8 @@ struct CipherEnvelope {
     std::string client_message_id;
     std::string signature_b64;
     std::string sender_device_pubkey;
+    nlohmann::json ratchet_header = nullptr;
+    nlohmann::json ratchet_init = nullptr;
 };
 
 struct MessageOut {
@@ -92,6 +96,7 @@ struct MessageOut {
     std::string sender_device_id;
     std::string sender_device_uid;
     std::string sender_device_pubkey;
+    std::string encryption_mode = "sealedbox_v0_2a";
     std::string client_message_id;
     long long sent_at_ms = 0;
     std::string sender_prev_hash;
@@ -102,12 +107,63 @@ struct MessageOut {
 
 struct MessageSendRequest {
     std::string conversation_id;
+    std::string encryption_mode = "sealedbox_v0_2a";
     CipherEnvelope envelope;
     std::string client_message_id;
     long long sent_at_ms = 0;
     std::string sender_prev_hash;
     std::string sender_chain_hash;
     std::vector<CipherEnvelope> envelopes;
+};
+
+struct SignedPrekeyUpload {
+    int key_id = 1;
+    std::string pub_x25519_b64;
+    std::string sig_by_device_sign_key_b64;
+    std::string expires_at;
+};
+
+struct OneTimePrekeyUpload {
+    int key_id = 1;
+    std::string pub_x25519_b64;
+};
+
+struct PrekeyUploadRequest {
+    SignedPrekeyUpload signed_prekey;
+    std::vector<OneTimePrekeyUpload> one_time_prekeys;
+};
+
+struct PrekeyUploadResponse {
+    int uploaded_signed_prekey_key_id = 0;
+    int accepted_one_time_prekeys = 0;
+};
+
+struct SignedPrekeyOut {
+    int key_id = 0;
+    std::string pub_x25519_b64;
+    std::string sig_by_device_sign_key_b64;
+    std::string expires_at;
+};
+
+struct OneTimePrekeyOut {
+    int key_id = 0;
+    std::string pub_x25519_b64;
+};
+
+struct ResolvedPrekeyDevice {
+    std::string device_uid;
+    std::string pub_sign_key;
+    std::string pub_dh_key;
+    std::vector<std::string> supported_message_modes;
+    bool opk_missing = false;
+    std::optional<SignedPrekeyOut> signed_prekey;
+    std::optional<OneTimePrekeyOut> one_time_prekey;
+};
+
+struct ResolvePrekeysResponse {
+    std::string username;
+    std::string peer_address;
+    std::vector<ResolvedPrekeyDevice> devices;
 };
 
 struct MessageSendResponse {
@@ -144,6 +200,32 @@ struct VoiceAudioChunk {
     std::string pcm_b64;
 };
 
+struct VoiceCallWebRtcOffer {
+    std::string call_id;
+    std::string sdp;
+    int call_schema_version = 1;
+    std::string call_mode = "webrtc";
+    int max_participants = 2;
+};
+
+struct VoiceCallWebRtcAnswer {
+    std::string call_id;
+    std::string sdp;
+    int call_schema_version = 1;
+    std::string call_mode = "webrtc";
+    int max_participants = 2;
+};
+
+struct VoiceCallWebRtcIce {
+    std::string call_id;
+    std::string candidate;
+    std::string sdp_mid;
+    int sdp_mline_index = -1;
+    int call_schema_version = 1;
+    std::string call_mode = "webrtc";
+    int max_participants = 2;
+};
+
 struct WsEventCallIncoming {
     std::string call_id;
     std::string conversation_id;
@@ -163,6 +245,10 @@ struct WsEventCallAccepted {
     std::string conversation_id;
     std::string peer_user_id;
     std::string peer_user_address;
+    int call_schema_version = 1;
+    std::string call_mode;
+    int max_participants = 2;
+    nlohmann::json ice_servers = nlohmann::json::array();
 };
 
 struct WsEventCallRejected {
@@ -193,6 +279,35 @@ struct WsEventCallAudio {
 struct WsEventCallError {
     std::string code;
     std::string detail;
+};
+
+struct WsEventCallWebRtcOffer {
+    std::string call_id;
+    std::string sdp;
+    int call_schema_version = 1;
+    std::string call_mode = "webrtc";
+    int max_participants = 2;
+    std::string from_user_address;
+};
+
+struct WsEventCallWebRtcAnswer {
+    std::string call_id;
+    std::string sdp;
+    int call_schema_version = 1;
+    std::string call_mode = "webrtc";
+    int max_participants = 2;
+    std::string from_user_address;
+};
+
+struct WsEventCallWebRtcIce {
+    std::string call_id;
+    std::string candidate;
+    std::string sdp_mid;
+    int sdp_mline_index = -1;
+    int call_schema_version = 1;
+    std::string call_mode = "webrtc";
+    int max_participants = 2;
+    std::string from_user_address;
 };
 
 inline void to_json(nlohmann::json& j, const UserOut& v) {
@@ -275,6 +390,7 @@ inline void to_json(nlohmann::json& j, const DeviceOut& v) {
         {"pub_sign_key", v.ik_ed25519_pub},
         {"pub_dh_key", v.enc_x25519_pub},
         {"status", v.status},
+        {"supported_message_modes", v.supported_message_modes},
         {"last_seen_at", v.last_seen_at},
         {"revoked_at", v.revoked_at.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.revoked_at)},
         {"created_at", v.created_at},
@@ -289,6 +405,7 @@ inline void from_json(const nlohmann::json& j, DeviceOut& v) {
     v.ik_ed25519_pub = j.value("ik_ed25519_pub", j.value("pub_sign_key", ""));
     v.enc_x25519_pub = j.value("enc_x25519_pub", j.value("pub_dh_key", ""));
     v.status = j.value("status", "active");
+    v.supported_message_modes = j.value("supported_message_modes", std::vector<std::string>{"sealedbox_v0_2a"});
     v.last_seen_at = j.value("last_seen_at", "");
     if (j.contains("revoked_at") && !j.at("revoked_at").is_null()) {
         v.revoked_at = j.value("revoked_at", "");
@@ -360,6 +477,12 @@ inline void to_json(nlohmann::json& j, const CipherEnvelope& v) {
         j["aad_b64"] = v.aad_b64.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.aad_b64);
         j["signature_b64"] = v.signature_b64;
         j["sender_device_pubkey"] = v.sender_device_pubkey;
+        if (!v.ratchet_header.is_null()) {
+            j["ratchet_header"] = v.ratchet_header;
+        }
+        if (!v.ratchet_init.is_null()) {
+            j["ratchet_init"] = v.ratchet_init;
+        }
         return;
     }
 
@@ -388,6 +511,8 @@ inline void from_json(const nlohmann::json& j, CipherEnvelope& v) {
     v.client_message_id = j.value("client_message_id", "");
     v.signature_b64 = j.value("signature_b64", "");
     v.sender_device_pubkey = j.value("sender_device_pubkey", "");
+    v.ratchet_header = j.value("ratchet_header", nlohmann::json(nullptr));
+    v.ratchet_init = j.value("ratchet_init", nlohmann::json(nullptr));
 }
 
 inline void to_json(nlohmann::json& j, const MessageOut& v) {
@@ -399,6 +524,7 @@ inline void to_json(nlohmann::json& j, const MessageOut& v) {
         {"sender_device_id", v.sender_device_id.empty() ? v.sender_device_uid : v.sender_device_id},
         {"sender_device_uid", v.sender_device_uid.empty() ? v.sender_device_id : v.sender_device_uid},
         {"sender_device_pubkey", v.sender_device_pubkey},
+        {"encryption_mode", v.encryption_mode},
         {"client_message_id", v.client_message_id},
         {"sent_at_ms", v.sent_at_ms},
         {"sender_prev_hash", v.sender_prev_hash},
@@ -416,6 +542,7 @@ inline void from_json(const nlohmann::json& j, MessageOut& v) {
     v.sender_device_id = j.value("sender_device_id", j.value("sender_device_uid", ""));
     v.sender_device_uid = j.value("sender_device_uid", v.sender_device_id);
     v.sender_device_pubkey = j.value("sender_device_pubkey", "");
+    v.encryption_mode = j.value("encryption_mode", "sealedbox_v0_2a");
     j.at("client_message_id").get_to(v.client_message_id);
     v.sent_at_ms = j.value("sent_at_ms", 0LL);
     v.sender_prev_hash = j.value("sender_prev_hash", "");
@@ -434,6 +561,7 @@ inline void to_json(nlohmann::json& j, const MessageSendRequest& v) {
     if (!v.envelopes.empty()) {
         j = nlohmann::json{
             {"conversation_id", v.conversation_id},
+            {"encryption_mode", v.encryption_mode},
             {"client_message_id", v.client_message_id},
             {"sent_at_ms", v.sent_at_ms},
             {"sender_prev_hash", v.sender_prev_hash},
@@ -447,6 +575,7 @@ inline void to_json(nlohmann::json& j, const MessageSendRequest& v) {
 
 inline void from_json(const nlohmann::json& j, MessageSendRequest& v) {
     j.at("conversation_id").get_to(v.conversation_id);
+    v.encryption_mode = j.value("encryption_mode", "sealedbox_v0_2a");
     if (j.contains("envelopes")) {
         j.at("envelopes").get_to(v.envelopes);
     } else if (j.contains("envelope")) {
@@ -465,6 +594,146 @@ inline void to_json(nlohmann::json& j, const MessageSendResponse& v) {
 inline void from_json(const nlohmann::json& j, MessageSendResponse& v) {
     v.duplicate = j.value("duplicate", false);
     j.at("message").get_to(v.message);
+}
+
+inline void to_json(nlohmann::json& j, const SignedPrekeyUpload& v) {
+    j = nlohmann::json{
+        {"key_id", v.key_id},
+        {"pub_x25519_b64", v.pub_x25519_b64},
+        {"sig_by_device_sign_key_b64", v.sig_by_device_sign_key_b64},
+        {"expires_at", v.expires_at},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, SignedPrekeyUpload& v) {
+    v.key_id = j.value("key_id", 1);
+    v.pub_x25519_b64 = j.value("pub_x25519_b64", "");
+    v.sig_by_device_sign_key_b64 = j.value("sig_by_device_sign_key_b64", "");
+    v.expires_at = j.value("expires_at", "");
+}
+
+inline void to_json(nlohmann::json& j, const OneTimePrekeyUpload& v) {
+    j = nlohmann::json{
+        {"key_id", v.key_id},
+        {"pub_x25519_b64", v.pub_x25519_b64},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, OneTimePrekeyUpload& v) {
+    v.key_id = j.value("key_id", 1);
+    v.pub_x25519_b64 = j.value("pub_x25519_b64", "");
+}
+
+inline void to_json(nlohmann::json& j, const PrekeyUploadRequest& v) {
+    j = nlohmann::json{
+        {"signed_prekey", v.signed_prekey},
+        {"one_time_prekeys", v.one_time_prekeys},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PrekeyUploadRequest& v) {
+    if (j.contains("signed_prekey")) {
+        j.at("signed_prekey").get_to(v.signed_prekey);
+    }
+    if (j.contains("one_time_prekeys")) {
+        j.at("one_time_prekeys").get_to(v.one_time_prekeys);
+    }
+}
+
+inline void to_json(nlohmann::json& j, const PrekeyUploadResponse& v) {
+    j = nlohmann::json{
+        {"uploaded_signed_prekey_key_id", v.uploaded_signed_prekey_key_id},
+        {"accepted_one_time_prekeys", v.accepted_one_time_prekeys},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PrekeyUploadResponse& v) {
+    v.uploaded_signed_prekey_key_id = j.value("uploaded_signed_prekey_key_id", 0);
+    v.accepted_one_time_prekeys = j.value("accepted_one_time_prekeys", 0);
+}
+
+inline void to_json(nlohmann::json& j, const SignedPrekeyOut& v) {
+    j = nlohmann::json{
+        {"key_id", v.key_id},
+        {"pub_x25519_b64", v.pub_x25519_b64},
+        {"sig_by_device_sign_key_b64", v.sig_by_device_sign_key_b64},
+        {"expires_at", v.expires_at},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, SignedPrekeyOut& v) {
+    v.key_id = j.value("key_id", 0);
+    v.pub_x25519_b64 = j.value("pub_x25519_b64", "");
+    v.sig_by_device_sign_key_b64 = j.value("sig_by_device_sign_key_b64", "");
+    v.expires_at = j.value("expires_at", "");
+}
+
+inline void to_json(nlohmann::json& j, const OneTimePrekeyOut& v) {
+    j = nlohmann::json{
+        {"key_id", v.key_id},
+        {"pub_x25519_b64", v.pub_x25519_b64},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, OneTimePrekeyOut& v) {
+    v.key_id = j.value("key_id", 0);
+    v.pub_x25519_b64 = j.value("pub_x25519_b64", "");
+}
+
+inline void to_json(nlohmann::json& j, const ResolvedPrekeyDevice& v) {
+    j = nlohmann::json{
+        {"device_uid", v.device_uid},
+        {"pub_sign_key", v.pub_sign_key},
+        {"pub_dh_key", v.pub_dh_key},
+        {"supported_message_modes", v.supported_message_modes},
+        {"opk_missing", v.opk_missing},
+    };
+    if (v.signed_prekey.has_value()) {
+        j["signed_prekey"] = v.signed_prekey.value();
+    } else {
+        j["signed_prekey"] = nullptr;
+    }
+    if (v.one_time_prekey.has_value()) {
+        j["one_time_prekey"] = v.one_time_prekey.value();
+    } else {
+        j["one_time_prekey"] = nullptr;
+    }
+}
+
+inline void from_json(const nlohmann::json& j, ResolvedPrekeyDevice& v) {
+    v.device_uid = j.value("device_uid", "");
+    v.pub_sign_key = j.value("pub_sign_key", "");
+    v.pub_dh_key = j.value("pub_dh_key", "");
+    v.supported_message_modes = j.value("supported_message_modes", std::vector<std::string>{});
+    v.opk_missing = j.value("opk_missing", false);
+    if (j.contains("signed_prekey") && !j.at("signed_prekey").is_null()) {
+        v.signed_prekey = j.at("signed_prekey").get<SignedPrekeyOut>();
+    } else {
+        v.signed_prekey.reset();
+    }
+    if (j.contains("one_time_prekey") && !j.at("one_time_prekey").is_null()) {
+        v.one_time_prekey = j.at("one_time_prekey").get<OneTimePrekeyOut>();
+    } else {
+        v.one_time_prekey.reset();
+    }
+}
+
+inline void to_json(nlohmann::json& j, const ResolvePrekeysResponse& v) {
+    j = nlohmann::json{
+        {"username", v.username},
+        {"peer_address", v.peer_address},
+        {"devices", v.devices},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ResolvePrekeysResponse& v) {
+    v.username = j.value("username", "");
+    v.peer_address = j.value("peer_address", "");
+    if (j.contains("devices")) {
+        j.at("devices").get_to(v.devices);
+    } else {
+        v.devices.clear();
+    }
 }
 
 inline void from_json(const nlohmann::json& j, WsEventMessageNew& v) {
@@ -526,6 +795,64 @@ inline void from_json(const nlohmann::json& j, VoiceAudioChunk& v) {
     j.at("pcm_b64").get_to(v.pcm_b64);
 }
 
+inline void to_json(nlohmann::json& j, const VoiceCallWebRtcOffer& v) {
+    j = nlohmann::json{
+        {"call_id", v.call_id},
+        {"sdp", v.sdp},
+        {"call_schema_version", v.call_schema_version},
+        {"call_mode", v.call_mode},
+        {"max_participants", v.max_participants},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, VoiceCallWebRtcOffer& v) {
+    v.call_id = j.value("call_id", "");
+    v.sdp = j.value("sdp", "");
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+}
+
+inline void to_json(nlohmann::json& j, const VoiceCallWebRtcAnswer& v) {
+    j = nlohmann::json{
+        {"call_id", v.call_id},
+        {"sdp", v.sdp},
+        {"call_schema_version", v.call_schema_version},
+        {"call_mode", v.call_mode},
+        {"max_participants", v.max_participants},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, VoiceCallWebRtcAnswer& v) {
+    v.call_id = j.value("call_id", "");
+    v.sdp = j.value("sdp", "");
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+}
+
+inline void to_json(nlohmann::json& j, const VoiceCallWebRtcIce& v) {
+    j = nlohmann::json{
+        {"call_id", v.call_id},
+        {"candidate", v.candidate},
+        {"sdp_mid", v.sdp_mid.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.sdp_mid)},
+        {"sdp_mline_index", v.sdp_mline_index < 0 ? nlohmann::json(nullptr) : nlohmann::json(v.sdp_mline_index)},
+        {"call_schema_version", v.call_schema_version},
+        {"call_mode", v.call_mode},
+        {"max_participants", v.max_participants},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, VoiceCallWebRtcIce& v) {
+    v.call_id = j.value("call_id", "");
+    v.candidate = j.value("candidate", "");
+    v.sdp_mid = j.value("sdp_mid", "");
+    v.sdp_mline_index = j.value("sdp_mline_index", -1);
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+}
+
 inline void from_json(const nlohmann::json& j, WsEventCallIncoming& v) {
     j.at("call_id").get_to(v.call_id);
     j.at("conversation_id").get_to(v.conversation_id);
@@ -545,6 +872,10 @@ inline void from_json(const nlohmann::json& j, WsEventCallAccepted& v) {
     j.at("conversation_id").get_to(v.conversation_id);
     v.peer_user_id = j.value("peer_user_id", "");
     v.peer_user_address = j.value("peer_user_address", "");
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "");
+    v.max_participants = j.value("max_participants", 2);
+    v.ice_servers = j.value("ice_servers", nlohmann::json::array());
 }
 
 inline void from_json(const nlohmann::json& j, WsEventCallRejected& v) {
@@ -575,6 +906,35 @@ inline void from_json(const nlohmann::json& j, WsEventCallAudio& v) {
 inline void from_json(const nlohmann::json& j, WsEventCallError& v) {
     v.code = j.value("code", "");
     v.detail = j.value("detail", "");
+}
+
+inline void from_json(const nlohmann::json& j, WsEventCallWebRtcOffer& v) {
+    v.call_id = j.value("call_id", "");
+    v.sdp = j.value("sdp", "");
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+    v.from_user_address = j.value("from_user_address", "");
+}
+
+inline void from_json(const nlohmann::json& j, WsEventCallWebRtcAnswer& v) {
+    v.call_id = j.value("call_id", "");
+    v.sdp = j.value("sdp", "");
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+    v.from_user_address = j.value("from_user_address", "");
+}
+
+inline void from_json(const nlohmann::json& j, WsEventCallWebRtcIce& v) {
+    v.call_id = j.value("call_id", "");
+    v.candidate = j.value("candidate", "");
+    v.sdp_mid = j.value("sdp_mid", "");
+    v.sdp_mline_index = j.value("sdp_mline_index", -1);
+    v.call_schema_version = j.value("call_schema_version", 1);
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+    v.from_user_address = j.value("from_user_address", "");
 }
 
 }  // namespace blackwire
