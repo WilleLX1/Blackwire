@@ -10,8 +10,9 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.v2_device import DeviceOutV2, DeviceRegisterRequestV2, UserDeviceLookupV2
 from app.services.federation_client import FederationClientError, federation_client
+from app.services.metrics import metrics
 from app.services.peer_address import parse_peer_address_with_policy
-from app.services.server_identity import get_server_onion
+from app.services.server_authority import is_local_server_authority
 from app.ws.manager import connection_manager
 
 
@@ -38,6 +39,12 @@ class DeviceServiceV2:
             last_seen_at=device.last_seen_at,
             revoked_at=device.revoked_at,
         )
+
+    def _local_attachment_inline_max_bytes(self) -> int:
+        return self.settings.effective_attachment_inline_max_bytes()
+
+    def _local_max_ciphertext_bytes(self) -> int:
+        return self.settings.effective_max_ciphertext_bytes()
 
     async def register_device(
         self,
@@ -115,13 +122,15 @@ class DeviceServiceV2:
         self,
         session: AsyncSession,
         peer_address: str,
+        request_authority: str | None = None,
     ) -> UserDeviceLookupV2 | None:
         try:
             parsed = parse_peer_address_with_policy(peer_address, self.settings.tor_enabled)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-        if parsed.server_onion == get_server_onion():
+        additional_aliases = {request_authority} if request_authority else None
+        if is_local_server_authority(parsed.server_onion, self.settings, additional_aliases):
             user_stmt = select(User).where(User.username == parsed.username, User.disabled_at.is_(None))
             user = (await session.execute(user_stmt)).scalar_one_or_none()
             if user is None:
@@ -131,6 +140,9 @@ class DeviceServiceV2:
                 username=user.username,
                 peer_address=parsed.canonical,
                 devices=[self._to_device_out(device) for device in devices],
+                attachment_inline_max_bytes=self._local_attachment_inline_max_bytes(),
+                max_ciphertext_bytes=self._local_max_ciphertext_bytes(),
+                attachment_policy_source="local",
             )
 
         try:
@@ -142,6 +154,21 @@ class DeviceServiceV2:
 
         if not remote.peer_address:
             remote.peer_address = parsed.canonical
+        remote.attachment_policy_source = "remote"
+        if remote.attachment_inline_max_bytes <= 0 or remote.max_ciphertext_bytes <= 0:
+            remote.attachment_inline_max_bytes = self._local_attachment_inline_max_bytes()
+            remote.max_ciphertext_bytes = self._local_max_ciphertext_bytes()
+            remote.attachment_policy_source = "fallback_local"
+            await metrics.inc("attachments.policy.fallback_local")
+        else:
+            remote.attachment_inline_max_bytes = min(
+                remote.attachment_inline_max_bytes,
+                self.settings.attachment_hard_ceiling_bytes,
+            )
+            remote.max_ciphertext_bytes = min(
+                remote.max_ciphertext_bytes,
+                self.settings.attachment_hard_ceiling_bytes,
+            )
         return remote
 
 

@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -28,6 +30,9 @@ class UserDeviceLookupV2(BaseModel):
     username: str
     peer_address: str
     devices: list[DeviceOutV2]
+    attachment_inline_max_bytes: int = Field(default=0, ge=0)
+    max_ciphertext_bytes: int = Field(default=0, ge=0)
+    attachment_policy_source: Literal["local", "remote", "fallback_local"] = "local"
 
 
 class DeviceResolveListV2(BaseModel):

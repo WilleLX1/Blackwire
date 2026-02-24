@@ -22,6 +22,7 @@ from app.services.device_service_v2 import device_service_v2
 from app.services.federation_client import FederationClientError, federation_client
 from app.services.metrics import metrics
 from app.services.peer_address import parse_peer_address_with_policy
+from app.services.server_authority import is_local_server_authority
 from app.services.server_identity import get_server_onion, server_address_for_username
 
 
@@ -119,9 +120,11 @@ class PrekeyServiceV2:
         session: AsyncSession,
         requester_user: User,
         peer_address: str,
+        request_authority: str | None = None,
     ) -> ResolvePrekeysResponseV2:
         parsed = parse_peer_address_with_policy(peer_address, self.settings.tor_enabled)
-        if parsed.server_onion != get_server_onion():
+        additional_aliases = {request_authority} if request_authority else None
+        if not is_local_server_authority(parsed.server_onion, self.settings, additional_aliases):
             try:
                 return await federation_client.get_remote_user_prekeys_v2(parsed.server_onion, parsed.username)
             except FederationClientError as exc:
@@ -129,7 +132,11 @@ class PrekeyServiceV2:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remote peer prekeys not found") from exc
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail) from exc
 
-        lookup = await device_service_v2.resolve_devices_by_peer_address(session, parsed.canonical)
+        lookup = await device_service_v2.resolve_devices_by_peer_address(
+            session,
+            parsed.canonical,
+            request_authority=request_authority,
+        )
         if lookup is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer devices not found")
 

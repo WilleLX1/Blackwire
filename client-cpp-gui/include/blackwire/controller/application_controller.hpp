@@ -10,6 +10,8 @@
 #include <QMetaType>
 #include <QString>
 
+class QTimer;
+
 #include "blackwire/interfaces/api_client.hpp"
 #include "blackwire/interfaces/audio_call_engine.hpp"
 #include "blackwire/interfaces/crypto_service.hpp"
@@ -50,12 +52,19 @@ public:
     void LoadConversations();
     void OpenConversationByPeer(const QString& username);
     void SelectConversation(const QString& conversation_id);
+    bool CreateGroupFromCurrentDm();
+    GroupInvitePickerView LoadInvitableContactsForCurrentGroup(const QString& query);
+    bool InviteContactsToCurrentGroup(const std::vector<QString>& peer_addresses);
+    bool RenameSelectedGroup(const QString& new_name);
+    bool IsSelectedConversationOwnerManagedGroup() const;
     void SendMessageToPeer(const QString& peer_username, const QString& message_text);
+    void SendFileToPeer(const QString& peer_username, const QString& file_path);
     void StartVoiceCall();
     void AcceptVoiceCall();
     void RejectVoiceCall();
     void EndVoiceCall();
     void SetCallMuted(bool muted);
+    void SetPresenceStatus(const QString& status);
     void LoadAudioDevices();
     void SetPreferredAudioDevices(const QString& input_device_id, const QString& output_device_id);
     bool AcceptMessagesFromStrangers() const;
@@ -83,6 +92,7 @@ signals:
         const QString& preview_text);
     void MessageSendSucceeded(const QString& conversation_id, const QString& message_id);
     void ConnectionStatusChanged(const QString& status);
+    void UserPresenceChanged(const QString& status);
     void CallStateChanged(const CallStateView& state);
     void IncomingCallReceived(const CallStateView& state);
     void AudioDevicesChanged(
@@ -109,6 +119,17 @@ private:
     void EncryptPlaintextCacheInState();
     void DecryptPlaintextCacheInState();
     void PersistState();
+    void RefreshPresenceCache();
+    QString NormalizePresenceStatus(const QString& status) const;
+    QString PresenceForPeerAddress(const QString& peer_address) const;
+    QString ResolvePeerAddressForConversation(const std::string& conversation_id) const;
+    void AppendCallHistoryEntry(const QString& reason);
+    void AppendGroupRenameHistoryEntry(
+        const QString& conversation_id,
+        const QString& actor_address,
+        const QString& group_name,
+        const QString& dedupe_suffix);
+    QString FormatCallDuration(qint64 duration_ms) const;
     void RefreshConversationList();
     QString RenderMessage(const MessageOut& message, const std::string& plaintext) const;
     std::vector<ThreadMessageView> RenderThread(const std::string& conversation_id) const;
@@ -164,9 +185,23 @@ private:
     QString connection_status_ = "Disconnected";
     std::deque<QString> diagnostics_;
     std::unordered_map<std::string, std::vector<DeviceOut>> peer_device_cache_;
+    struct AttachmentPolicyCacheEntry {
+        qint64 attachment_inline_max_bytes = 0;
+        qint64 max_ciphertext_bytes = 0;
+        std::string source = "local";
+    };
+    std::unordered_map<std::string, AttachmentPolicyCacheEntry> peer_attachment_policy_cache_;
+    std::optional<AttachmentPolicyCacheEntry> local_attachment_policy_cache_;
+    std::unordered_map<std::string, QString> peer_presence_status_by_address_;
+    QString user_presence_status_ = "active";
     std::map<std::string, std::vector<LocalMessage>> pending_request_messages_;
     std::map<std::string, QString> pending_request_senders_;
     CallStateView call_state_;
+    bool call_initiated_locally_ = false;
+    qint64 call_started_at_ms_ = 0;
+    qint64 call_active_started_at_ms_ = 0;
+    bool pending_outgoing_end_request_ = false;
+    QTimer* presence_poll_timer_ = nullptr;
     int audio_sequence_ = 0;
 };
 

@@ -49,6 +49,10 @@ QLineEdit, QPlainTextEdit, QListWidget, QComboBox {
     padding: 6px 8px;
 }
 
+QComboBox#statusCombo {
+    min-width: 96px;
+}
+
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
     border-color: #5865f2;
 }
@@ -95,6 +99,12 @@ QPushButton#primaryButton:pressed {
 
 QPushButton#secondaryButton {
     background: #3a3d44;
+}
+
+QPushButton#secondaryButton:checked {
+    background: #4e5ada;
+    border: 1px solid #4a57d8;
+    color: #ffffff;
 }
 
 QPushButton#dangerButton {
@@ -148,7 +158,19 @@ QLabel#dmSidebarTitle {
     color: #ffffff;
 }
 
+QLabel#contactsSidebarTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: #d6d9de;
+}
+
 QWidget#identityCard {
+    background: #232428;
+    border: 1px solid #1b1c20;
+    border-radius: 10px;
+}
+
+QWidget#contactsToggleCard {
     background: #232428;
     border: 1px solid #1b1c20;
     border-radius: 10px;
@@ -162,10 +184,19 @@ QWidget#chatPane {
     background: #313338;
 }
 
-QLabel#threadTitle {
+QLabel#threadTitle, QLineEdit#threadTitle {
     font-size: 15px;
     font-weight: 700;
     color: #ffffff;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 2px 6px;
+}
+
+QLineEdit#threadTitle:focus {
+    border-color: #5865f2;
+    background: #232428;
 }
 
 QLabel#connectionPill {
@@ -285,11 +316,24 @@ QListWidget#conversationList {
     border: 1px solid #1b1c20;
 }
 
+QListWidget#contactsList {
+    background: #2b2d31;
+    border: 1px solid #1b1c20;
+}
+
 QListWidget#conversationList::item {
     border-radius: 8px;
 }
 
 QListWidget#conversationList::item:selected {
+    background: #404249;
+}
+
+QListWidget#contactsList::item {
+    border-radius: 8px;
+}
+
+QListWidget#contactsList::item:selected {
     background: #404249;
 }
 
@@ -314,6 +358,31 @@ QLabel#conversationSubtitle {
 QLabel#conversationTime {
     color: #9aa0aa;
     font-size: 11px;
+}
+
+QLabel#presenceDot {
+    border-radius: 5px;
+    min-width: 10px;
+    max-width: 10px;
+    min-height: 10px;
+    max-height: 10px;
+    background: #6a6f78;
+}
+
+QLabel#presenceDot[state=\"active\"] {
+    background: #2d7d46;
+}
+
+QLabel#presenceDot[state=\"inactive\"] {
+    background: #d4a63c;
+}
+
+QLabel#presenceDot[state=\"offline\"] {
+    background: #6a6f78;
+}
+
+QLabel#presenceDot[state=\"dnd\"] {
+    background: #9e2c31;
 }
 
 QListWidget#messageList {

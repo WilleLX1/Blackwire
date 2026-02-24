@@ -128,6 +128,7 @@ QtWsClient::QtWsClient(QObject* parent) : QObject(parent) {
 void QtWsClient::SetHandlers(
     MessageHandler on_message,
     CallIncomingHandler on_call_incoming,
+    CallGroupStateHandler on_call_group_state,
     CallRingingHandler on_call_ringing,
     CallAcceptedHandler on_call_accepted,
     CallRejectedHandler on_call_rejected,
@@ -138,10 +139,12 @@ void QtWsClient::SetHandlers(
     CallWebRtcOfferHandler on_call_webrtc_offer,
     CallWebRtcAnswerHandler on_call_webrtc_answer,
     CallWebRtcIceHandler on_call_webrtc_ice,
+    GroupRenamedHandler on_group_renamed,
     ErrorHandler on_error,
     StatusHandler on_status) {
     on_message_ = std::move(on_message);
     on_call_incoming_ = std::move(on_call_incoming);
+    on_call_group_state_ = std::move(on_call_group_state);
     on_call_ringing_ = std::move(on_call_ringing);
     on_call_accepted_ = std::move(on_call_accepted);
     on_call_rejected_ = std::move(on_call_rejected);
@@ -152,6 +155,7 @@ void QtWsClient::SetHandlers(
     on_call_webrtc_offer_ = std::move(on_call_webrtc_offer);
     on_call_webrtc_answer_ = std::move(on_call_webrtc_answer);
     on_call_webrtc_ice_ = std::move(on_call_webrtc_ice);
+    on_group_renamed_ = std::move(on_group_renamed);
     on_error_ = std::move(on_error);
     on_status_ = std::move(on_status);
 }
@@ -262,6 +266,14 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
             return;
         }
 
+        if (type == "call.group.incoming") {
+            WsEventCallIncoming event = payload.get<WsEventCallIncoming>();
+            if (on_call_incoming_) {
+                on_call_incoming_(event);
+            }
+            return;
+        }
+
         if (type == "call.ringing") {
             WsEventCallRinging event = payload.get<WsEventCallRinging>();
             if (on_call_ringing_) {
@@ -298,6 +310,34 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
             WsEventCallEnded event = payload.get<WsEventCallEnded>();
             if (on_call_ended_) {
                 on_call_ended_(event);
+            }
+            return;
+        }
+
+        if (type == "call.group.ended") {
+            WsEventCallEnded event = payload.get<WsEventCallEnded>();
+            if (on_call_ended_) {
+                on_call_ended_(event);
+            }
+            return;
+        }
+
+        if (type == "call.group.state") {
+            WsEventCallGroupState event = payload.get<WsEventCallGroupState>();
+            if (on_call_group_state_) {
+                on_call_group_state_(event);
+            }
+            return;
+        }
+
+        if (type == "call.group.participant") {
+            return;
+        }
+
+        if (type == "conversation.group.renamed") {
+            WsEventGroupRenamed event = payload.get<WsEventGroupRenamed>();
+            if (on_group_renamed_) {
+                on_group_renamed_(event);
             }
             return;
         }

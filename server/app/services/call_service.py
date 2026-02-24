@@ -158,7 +158,6 @@ class CallService:
         incoming_payload = None
         ringing_payload = None
         busy_payload = None
-        rejected_payload = None
 
         async with self._lock:
             if caller_user_id in self._user_to_call:
@@ -171,12 +170,6 @@ class CallService:
                 busy_payload = {
                     "type": "call.busy",
                     "reason": "peer_busy",
-                    "conversation_id": payload.conversation_id,
-                }
-            elif not await connection_manager.has_user(callee_user_id):
-                rejected_payload = {
-                    "type": "call.rejected",
-                    "reason": "peer_offline",
                     "conversation_id": payload.conversation_id,
                 }
             else:
@@ -212,9 +205,6 @@ class CallService:
 
         if busy_payload is not None:
             await connection_manager.send_to_user(caller_user_id, busy_payload)
-            return
-        if rejected_payload is not None:
-            await connection_manager.send_to_user(caller_user_id, rejected_payload)
             return
         if incoming_payload is not None:
             await connection_manager.send_to_user(callee_user_id, incoming_payload)
@@ -803,8 +793,6 @@ class CallService:
 
     async def relay_offer(self, session: AsyncSession, payload: FederationCallOfferRequest) -> None:
         local_user = await self._local_user_for_address(session, payload.to_user_address)
-        if not await connection_manager.has_user(local_user.id):
-            raise CallProtocolError("peer_offline", "Local callee is offline")
 
         async with self._lock:
             if local_user.id in self._user_to_call:

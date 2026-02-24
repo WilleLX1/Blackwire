@@ -29,6 +29,23 @@ QString JoinUrl(const std::string& base_url, const QString& path) {
     return base + "/api/v2" + path;
 }
 
+int DefaultPortForScheme(const QString& scheme) {
+    if (scheme == "https" || scheme == "wss") {
+        return 443;
+    }
+    return 80;
+}
+
+QString AuthorityFromBaseUrl(const std::string& base_url) {
+    const QUrl url(QString::fromStdString(base_url).trimmed());
+    if (!url.isValid() || url.host().trimmed().isEmpty()) {
+        return "local.invalid";
+    }
+    const QString host = url.host().trimmed().toLower();
+    const int port = url.port() > 0 ? url.port() : DefaultPortForScheme(url.scheme().trimmed().toLower());
+    return QString("%1:%2").arg(host).arg(port);
+}
+
 bool IsOnionHost(const QString& host) {
     return host.trimmed().toLower().endsWith(".onion");
 }
@@ -198,7 +215,7 @@ UserDeviceLookup QtApiClient::GetUserDevice(
     } else {
         QUrl url(JoinUrl(base_url, "/users/resolve-devices"));
         QUrlQuery query;
-        query.addQueryItem("peer_address", QString("%1@local.invalid").arg(peer));
+        query.addQueryItem("peer_address", QString("%1@%2").arg(peer, AuthorityFromBaseUrl(base_url)));
         url.setQuery(query);
         endpoint = url.toString();
     }
@@ -242,6 +259,32 @@ PrekeyUploadResponse QtApiClient::UploadPrekeys(
     return json.get<PrekeyUploadResponse>();
 }
 
+PresenceSetResponse QtApiClient::SetPresenceStatus(
+    const std::string& base_url,
+    const std::string& access_token,
+    const PresenceSetRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, "/presence/set"),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<PresenceSetResponse>();
+}
+
+PresenceResolveResponse QtApiClient::ResolvePresence(
+    const std::string& base_url,
+    const std::string& access_token,
+    const PresenceResolveRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, "/presence/resolve"),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<PresenceResolveResponse>();
+}
+
 ConversationOut QtApiClient::CreateDm(
     const std::string& base_url,
     const std::string& access_token,
@@ -262,6 +305,19 @@ ConversationOut QtApiClient::CreateDm(
     return json.get<ConversationOut>();
 }
 
+ConversationOut QtApiClient::CreateGroup(
+    const std::string& base_url,
+    const std::string& access_token,
+    const CreateGroupConversationRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, "/conversations/group"),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<ConversationOut>();
+}
+
 std::vector<ConversationOut> QtApiClient::ListConversations(
     const std::string& base_url,
     const std::string& access_token) {
@@ -271,6 +327,70 @@ std::vector<ConversationOut> QtApiClient::ListConversations(
         QString::fromStdString(access_token),
         nullptr);
     return json.get<std::vector<ConversationOut>>();
+}
+
+std::vector<ConversationMemberOut> QtApiClient::ListConversationMembers(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id) {
+    const auto json = RequestJson(
+        "GET",
+        JoinUrl(base_url, QString("/conversations/%1/members").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<std::vector<ConversationMemberOut>>();
+}
+
+std::vector<ConversationMemberOut> QtApiClient::InviteConversationMembers(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id,
+    const GroupInviteRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/conversations/%1/members/invite").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<std::vector<ConversationMemberOut>>();
+}
+
+ConversationOut QtApiClient::RenameConversationGroup(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id,
+    const GroupRenameRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/conversations/%1/rename").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<ConversationOut>();
+}
+
+ConversationMemberOut QtApiClient::AcceptConversationInvite(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id) {
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/conversations/%1/invites/accept").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<ConversationMemberOut>();
+}
+
+ConversationRecipientsOut QtApiClient::GetConversationRecipients(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id) {
+    const auto json = RequestJson(
+        "GET",
+        JoinUrl(base_url, QString("/conversations/%1/recipients").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<ConversationRecipientsOut>();
 }
 
 std::vector<MessageOut> QtApiClient::ListMessages(

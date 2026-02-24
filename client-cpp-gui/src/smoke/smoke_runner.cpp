@@ -147,6 +147,7 @@ int SmokeRunner::Run(const QString& base_url) {
                 }
             },
             [&](const WsEventCallIncoming&) {},
+            [&](const WsEventCallGroupState&) {},
             [&](const WsEventCallRinging&) {},
             [&](const WsEventCallAccepted&) {},
             [&](const WsEventCallRejected&) {},
@@ -157,6 +158,7 @@ int SmokeRunner::Run(const QString& base_url) {
             [&](const WsEventCallWebRtcOffer&) {},
             [&](const WsEventCallWebRtcAnswer&) {},
             [&](const WsEventCallWebRtcIce&) {},
+            [&](const WsEventGroupRenamed&) {},
             [&](const std::string& error) {
                 std::cerr << "WS error: " << error << '\n';
             },

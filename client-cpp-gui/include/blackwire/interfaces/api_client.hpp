@@ -78,15 +78,57 @@ public:
         const std::string& access_token,
         const PrekeyUploadRequest& request) = 0;
 
+    virtual PresenceSetResponse SetPresenceStatus(
+        const std::string& base_url,
+        const std::string& access_token,
+        const PresenceSetRequest& request) = 0;
+
+    virtual PresenceResolveResponse ResolvePresence(
+        const std::string& base_url,
+        const std::string& access_token,
+        const PresenceResolveRequest& request) = 0;
+
     virtual ConversationOut CreateDm(
         const std::string& base_url,
         const std::string& access_token,
         const std::string& peer_address,
         const std::string& peer_username) = 0;
 
+    virtual ConversationOut CreateGroup(
+        const std::string& base_url,
+        const std::string& access_token,
+        const CreateGroupConversationRequest& request) = 0;
+
     virtual std::vector<ConversationOut> ListConversations(
         const std::string& base_url,
         const std::string& access_token) = 0;
+
+    virtual std::vector<ConversationMemberOut> ListConversationMembers(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) = 0;
+
+    virtual std::vector<ConversationMemberOut> InviteConversationMembers(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id,
+        const GroupInviteRequest& request) = 0;
+
+    virtual ConversationOut RenameConversationGroup(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id,
+        const GroupRenameRequest& request) = 0;
+
+    virtual ConversationMemberOut AcceptConversationInvite(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) = 0;
+
+    virtual ConversationRecipientsOut GetConversationRecipients(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) = 0;
 
     virtual std::vector<MessageOut> ListMessages(
         const std::string& base_url,

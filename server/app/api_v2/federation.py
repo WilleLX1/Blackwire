@@ -10,14 +10,27 @@ from app.schemas.v2_federation import (
     FederationCallWebRtcAnswerRequestV2,
     FederationCallWebRtcIceRequestV2,
     FederationCallWebRtcOfferRequestV2,
+    FederationGroupCallEndRequestV2,
+    FederationGroupCallJoinRequestV2,
+    FederationGroupCallLeaveRequestV2,
+    FederationGroupCallOfferRequestV2,
+    FederationGroupCallWebRtcAnswerRequestV2,
+    FederationGroupCallWebRtcIceRequestV2,
+    FederationGroupCallWebRtcOfferRequestV2,
+    FederationGroupEventRequestV2,
+    FederationGroupInviteAcceptRequestV2,
     FederationMessageRelayRequestV2,
+    FederationGroupSnapshotOutV2,
     FederationWellKnownOutV2,
 )
 from app.schemas.v2_device import DeviceOutV2, UserDeviceLookupV2
 from app.services.device_service_v2 import device_service_v2
 from app.services.call_service import CallProtocolError, call_service
 from app.services.federation_security import federation_security_service
+from app.services.group_call_service import group_call_service
+from app.services.group_conversation_service import group_conversation_service
 from app.services.message_service_v2 import message_service_v2
+from app.services.metrics import metrics
 from app.services.prekey_service_v2 import prekey_service_v2
 from app.services.rate_limit import rate_limiter
 from app.services.server_identity import (
@@ -27,7 +40,6 @@ from app.services.server_identity import (
 )
 
 router = APIRouter(prefix="/api/v2/federation", tags=["federation-v2"])
-_MAX_FEDERATION_BODY_BYTES = 262144
 
 
 def _raise_for_call_error(exc: CallProtocolError) -> None:
@@ -48,11 +60,24 @@ async def _verify_federation_write_auth(
     request: Request,
     session: AsyncSession,
 ) -> bytes:
+    settings = get_settings()
     await rate_limiter.enforce(client_rate_limit_key(request, "v2-federation-write"), limit=240)
     raw_body = await request.body()
-    if len(raw_body) > _MAX_FEDERATION_BODY_BYTES:
+    if len(raw_body) > settings.max_federation_body_bytes:
+        await metrics.inc("attachments.send.rejected_too_large")
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Federation payload too large")
     await federation_security_service.verify_incoming(session, request, raw_body)
+    sender = request.headers.get("x-bw-sender", "unknown").strip().lower() or "unknown"
+    try:
+        await rate_limiter.enforce_weighted(
+            f"v2-federation-bytes:{sender}",
+            units=len(raw_body),
+            limit=settings.federation_bytes_per_minute_per_peer,
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            await metrics.inc("attachments.send.rejected_rate_limited")
+        raise
     return raw_body
 
 
@@ -69,6 +94,9 @@ async def well_known() -> FederationWellKnownOutV2:
         federation_version="2",
         signing_public_key=get_federation_signing_public_key_b64(),
         identity_binding_mode="tor_v3_same_ed25519",
+        attachment_inline_max_bytes=settings.effective_attachment_inline_max_bytes(),
+        max_ciphertext_bytes=settings.effective_max_ciphertext_bytes(),
+        attachment_hard_ceiling_bytes=settings.attachment_hard_ceiling_bytes,
         supported_message_modes=device_service_v2.supported_message_modes(),
         supported_call_modes=supported_call_modes,
     )
@@ -106,6 +134,9 @@ async def get_local_user_devices(
             )
             for device in devices
         ],
+        attachment_inline_max_bytes=get_settings().effective_attachment_inline_max_bytes(),
+        max_ciphertext_bytes=get_settings().effective_max_ciphertext_bytes(),
+        attachment_policy_source="local",
     )
 
 
@@ -130,7 +161,131 @@ async def relay_message(
 ) -> dict[str, str]:
     raw_body = await _verify_federation_write_auth(request, session)
     payload = FederationMessageRelayRequestV2.model_validate_json(raw_body)
-    await message_service_v2.relay_message_from_federation(session, payload)
+    try:
+        await message_service_v2.relay_message_from_federation(session, payload)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE:
+            await metrics.inc("attachments.send.rejected_too_large")
+        raise
+    return {"status": "ok"}
+
+
+@router.post("/groups/events")
+async def relay_group_event(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupEventRequestV2.model_validate_json(raw_body)
+    sender_onion = request.headers.get("x-bw-sender", "").strip().lower() or None
+    await group_conversation_service.apply_federation_event(
+        session,
+        payload=payload,
+        sender_onion=sender_onion,
+    )
+    return {"status": "ok"}
+
+
+@router.get("/groups/{group_uid}/snapshot", response_model=FederationGroupSnapshotOutV2)
+async def group_snapshot(
+    request: Request,
+    group_uid: str,
+    session: AsyncSession = Depends(db_session),
+) -> FederationGroupSnapshotOutV2:
+    await rate_limiter.enforce(client_rate_limit_key(request, "v2-federation-group-snapshot"), limit=120)
+    await federation_security_service.verify_incoming(session, request, b"")
+    return await group_conversation_service.snapshot_for_group(session, group_uid)
+
+
+@router.post("/groups/invites/accept")
+async def group_invite_accept(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupInviteAcceptRequestV2.model_validate_json(raw_body)
+    await group_conversation_service.accept_remote_invite_to_origin(
+        session,
+        group_uid=payload.group_uid,
+        actor_address=payload.actor_address,
+    )
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/offer")
+async def relay_group_call_offer(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallOfferRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_offer(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/join")
+async def relay_group_call_join(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallJoinRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_join(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/leave")
+async def relay_group_call_leave(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallLeaveRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_leave(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/end")
+async def relay_group_call_end(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallEndRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_end(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/webrtc-offer")
+async def relay_group_call_webrtc_offer(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallWebRtcOfferRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_webrtc_offer(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/webrtc-answer")
+async def relay_group_call_webrtc_answer(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallWebRtcAnswerRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_webrtc_answer(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/group-calls/webrtc-ice")
+async def relay_group_call_webrtc_ice(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationGroupCallWebRtcIceRequestV2.model_validate_json(raw_body)
+    await group_call_service.relay_webrtc_ice(session, payload)
     return {"status": "ok"}
 
 

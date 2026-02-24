@@ -14,6 +14,7 @@ from app.api_v2 import (
     federation as federation_v2,
     keys as keys_v2,
     messages as messages_v2,
+    presence as presence_v2,
     users as users_v2,
     ws as ws_v2,
 )
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(devices_v2.router)
     app.include_router(keys_v2.router)
     app.include_router(users_v2.router)
+    app.include_router(presence_v2.router)
     app.include_router(conversations_v2.router)
     app.include_router(messages_v2.router)
     app.include_router(federation_v2.router)

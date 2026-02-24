@@ -11,6 +11,7 @@ class IWsClient {
 public:
     using MessageHandler = std::function<void(const WsEventMessageNew&)>;
     using CallIncomingHandler = std::function<void(const WsEventCallIncoming&)>;
+    using CallGroupStateHandler = std::function<void(const WsEventCallGroupState&)>;
     using CallRingingHandler = std::function<void(const WsEventCallRinging&)>;
     using CallAcceptedHandler = std::function<void(const WsEventCallAccepted&)>;
     using CallRejectedHandler = std::function<void(const WsEventCallRejected&)>;
@@ -21,6 +22,7 @@ public:
     using CallWebRtcOfferHandler = std::function<void(const WsEventCallWebRtcOffer&)>;
     using CallWebRtcAnswerHandler = std::function<void(const WsEventCallWebRtcAnswer&)>;
     using CallWebRtcIceHandler = std::function<void(const WsEventCallWebRtcIce&)>;
+    using GroupRenamedHandler = std::function<void(const WsEventGroupRenamed&)>;
     using ErrorHandler = std::function<void(const std::string&)>;
     using StatusHandler = std::function<void(bool)>;
 
@@ -29,6 +31,7 @@ public:
     virtual void SetHandlers(
         MessageHandler on_message,
         CallIncomingHandler on_call_incoming,
+        CallGroupStateHandler on_call_group_state,
         CallRingingHandler on_call_ringing,
         CallAcceptedHandler on_call_accepted,
         CallRejectedHandler on_call_rejected,
@@ -39,6 +42,7 @@ public:
         CallWebRtcOfferHandler on_call_webrtc_offer,
         CallWebRtcAnswerHandler on_call_webrtc_answer,
         CallWebRtcIceHandler on_call_webrtc_ice,
+        GroupRenamedHandler on_group_renamed,
         ErrorHandler on_error,
         StatusHandler on_status) = 0;
     virtual void Connect(const std::string& base_url, const std::string& access_token) = 0;

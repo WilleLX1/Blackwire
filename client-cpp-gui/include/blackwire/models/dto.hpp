@@ -59,6 +59,9 @@ struct UserDeviceLookup {
     std::string peer_address;
     DeviceOut device;
     std::vector<DeviceOut> devices;
+    long long attachment_inline_max_bytes = 0;
+    long long max_ciphertext_bytes = 0;
+    std::string attachment_policy_source = "local";
 };
 
 struct ConversationOut {
@@ -71,6 +74,41 @@ struct ConversationOut {
     std::string peer_username;
     std::string peer_server_onion;
     std::string peer_address;
+    std::string conversation_type = "direct";
+    std::string group_uid;
+    std::string group_name;
+    int member_count = 0;
+    std::string membership_state = "none";
+    bool can_manage_members = false;
+    std::string origin_server_onion;
+    std::string owner_address;
+};
+
+struct CreateGroupConversationRequest {
+    std::string name;
+    std::vector<std::string> member_addresses;
+};
+
+struct GroupInviteRequest {
+    std::vector<std::string> member_addresses;
+};
+
+struct GroupRenameRequest {
+    std::string name;
+};
+
+struct ConversationMemberOut {
+    std::string id;
+    std::string member_user_id;
+    std::string member_address;
+    std::string member_server_onion;
+    std::string role = "member";
+    std::string status = "invited";
+    std::string invited_by_address;
+    std::string invited_at;
+    std::string joined_at;
+    std::string left_at;
+    std::string updated_at;
 };
 
 struct CipherEnvelope {
@@ -166,6 +204,41 @@ struct ResolvePrekeysResponse {
     std::vector<ResolvedPrekeyDevice> devices;
 };
 
+struct ConversationRecipientDeviceOut {
+    std::string member_address;
+    std::string member_status = "active";
+    DeviceOut device;
+    std::optional<ResolvedPrekeyDevice> prekey;
+};
+
+struct ConversationRecipientsOut {
+    std::string conversation_id;
+    std::string conversation_type = "direct";
+    std::vector<ConversationRecipientDeviceOut> recipients;
+};
+
+struct PresenceSetRequest {
+    std::string status;
+};
+
+struct PresenceSetResponse {
+    std::string status;
+};
+
+struct PresenceResolveRequest {
+    std::vector<std::string> peer_addresses;
+};
+
+struct PresencePeerOut {
+    std::string peer_address;
+    std::string status;
+};
+
+struct PresenceResolveResponse {
+    std::string self_status;
+    std::vector<PresencePeerOut> peers;
+};
+
 struct MessageSendResponse {
     bool duplicate = false;
     MessageOut message;
@@ -206,6 +279,8 @@ struct VoiceCallWebRtcOffer {
     int call_schema_version = 1;
     std::string call_mode = "webrtc";
     int max_participants = 2;
+    std::string target_user_address;
+    std::string source_user_address;
 };
 
 struct VoiceCallWebRtcAnswer {
@@ -214,6 +289,8 @@ struct VoiceCallWebRtcAnswer {
     int call_schema_version = 1;
     std::string call_mode = "webrtc";
     int max_participants = 2;
+    std::string target_user_address;
+    std::string source_user_address;
 };
 
 struct VoiceCallWebRtcIce {
@@ -224,6 +301,8 @@ struct VoiceCallWebRtcIce {
     int call_schema_version = 1;
     std::string call_mode = "webrtc";
     int max_participants = 2;
+    std::string target_user_address;
+    std::string source_user_address;
 };
 
 struct WsEventCallIncoming {
@@ -268,6 +347,21 @@ struct WsEventCallEnded {
     std::string by_user_id;
 };
 
+struct WsEventCallGroupParticipant {
+    std::string member_address;
+    std::string state;
+};
+
+struct WsEventCallGroupState {
+    std::string call_id;
+    std::string conversation_id;
+    std::string group_uid;
+    std::string state;
+    std::string call_mode;
+    int max_participants = 2;
+    std::vector<WsEventCallGroupParticipant> participants;
+};
+
 struct WsEventCallAudio {
     std::string call_id;
     std::string from_user_id;
@@ -288,6 +382,8 @@ struct WsEventCallWebRtcOffer {
     std::string call_mode = "webrtc";
     int max_participants = 2;
     std::string from_user_address;
+    std::string source_user_address;
+    std::string target_user_address;
 };
 
 struct WsEventCallWebRtcAnswer {
@@ -297,6 +393,8 @@ struct WsEventCallWebRtcAnswer {
     std::string call_mode = "webrtc";
     int max_participants = 2;
     std::string from_user_address;
+    std::string source_user_address;
+    std::string target_user_address;
 };
 
 struct WsEventCallWebRtcIce {
@@ -308,7 +406,32 @@ struct WsEventCallWebRtcIce {
     std::string call_mode = "webrtc";
     int max_participants = 2;
     std::string from_user_address;
+    std::string source_user_address;
+    std::string target_user_address;
 };
+
+struct WsEventGroupRenamed {
+    std::string conversation_id;
+    std::string group_uid;
+    std::string group_name;
+    std::string actor_address;
+    int event_seq = 0;
+};
+
+inline std::string JsonStringOrDefault(
+    const nlohmann::json& j,
+    const char* key,
+    const std::string& fallback = "") {
+    const auto it = j.find(key);
+    if (it == j.end() || it->is_null()) {
+        return fallback;
+    }
+    try {
+        return it->get<std::string>();
+    } catch (...) {
+        return fallback;
+    }
+}
 
 inline void to_json(nlohmann::json& j, const UserOut& v) {
     j = nlohmann::json{
@@ -421,6 +544,9 @@ inline void to_json(nlohmann::json& j, const UserDeviceLookup& v) {
         {"peer_address", v.peer_address},
         {"device", v.device},
         {"devices", v.devices.empty() ? nlohmann::json::array({v.device}) : nlohmann::json(v.devices)},
+        {"attachment_inline_max_bytes", v.attachment_inline_max_bytes},
+        {"max_ciphertext_bytes", v.max_ciphertext_bytes},
+        {"attachment_policy_source", v.attachment_policy_source},
     };
 }
 
@@ -440,6 +566,9 @@ inline void from_json(const nlohmann::json& j, UserDeviceLookup& v) {
     if (v.device.id.empty() && !v.devices.empty()) {
         v.device = v.devices.front();
     }
+    v.attachment_inline_max_bytes = j.value("attachment_inline_max_bytes", 0LL);
+    v.max_ciphertext_bytes = j.value("max_ciphertext_bytes", 0LL);
+    v.attachment_policy_source = j.value("attachment_policy_source", "local");
 }
 
 inline void to_json(nlohmann::json& j, const ConversationOut& v) {
@@ -453,6 +582,14 @@ inline void to_json(nlohmann::json& j, const ConversationOut& v) {
         {"peer_username", v.peer_username},
         {"peer_server_onion", v.peer_server_onion},
         {"peer_address", v.peer_address},
+        {"conversation_type", v.conversation_type},
+        {"group_uid", v.group_uid.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.group_uid)},
+        {"group_name", v.group_name},
+        {"member_count", v.member_count},
+        {"membership_state", v.membership_state},
+        {"can_manage_members", v.can_manage_members},
+        {"origin_server_onion", v.origin_server_onion},
+        {"owner_address", v.owner_address},
     };
 }
 
@@ -466,6 +603,175 @@ inline void from_json(const nlohmann::json& j, ConversationOut& v) {
     v.peer_username = j.value("peer_username", "");
     v.peer_server_onion = j.value("peer_server_onion", "");
     v.peer_address = j.value("peer_address", "");
+    v.conversation_type = j.value("conversation_type", "direct");
+    if (j.contains("group_uid") && !j.at("group_uid").is_null()) {
+        v.group_uid = j.value("group_uid", "");
+    } else {
+        v.group_uid.clear();
+    }
+    v.group_name = j.value("group_name", "");
+    v.member_count = j.value("member_count", 0);
+    v.membership_state = j.value("membership_state", "none");
+    v.can_manage_members = j.value("can_manage_members", false);
+    v.origin_server_onion = j.value("origin_server_onion", "");
+    v.owner_address = j.value("owner_address", "");
+}
+
+inline void to_json(nlohmann::json& j, const CreateGroupConversationRequest& v) {
+    j = nlohmann::json{
+        {"name", v.name},
+        {"member_addresses", v.member_addresses},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, CreateGroupConversationRequest& v) {
+    v.name = j.value("name", "");
+    v.member_addresses = j.value("member_addresses", std::vector<std::string>{});
+}
+
+inline void to_json(nlohmann::json& j, const GroupInviteRequest& v) {
+    j = nlohmann::json{
+        {"member_addresses", v.member_addresses},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, GroupInviteRequest& v) {
+    v.member_addresses = j.value("member_addresses", std::vector<std::string>{});
+}
+
+inline void to_json(nlohmann::json& j, const GroupRenameRequest& v) {
+    j = nlohmann::json{
+        {"name", v.name},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, GroupRenameRequest& v) {
+    v.name = j.value("name", "");
+}
+
+inline void to_json(nlohmann::json& j, const ConversationMemberOut& v) {
+    j = nlohmann::json{
+        {"id", v.id},
+        {"member_user_id", v.member_user_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.member_user_id)},
+        {"member_address", v.member_address},
+        {"member_server_onion", v.member_server_onion},
+        {"role", v.role},
+        {"status", v.status},
+        {"invited_by_address", v.invited_by_address},
+        {"invited_at", v.invited_at},
+        {"joined_at", v.joined_at.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.joined_at)},
+        {"left_at", v.left_at.empty() ? nlohmann::json(nullptr) : nlohmann::json(v.left_at)},
+        {"updated_at", v.updated_at},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationMemberOut& v) {
+    v.id = JsonStringOrDefault(j, "id");
+    v.member_user_id = JsonStringOrDefault(j, "member_user_id");
+    v.member_address = JsonStringOrDefault(j, "member_address");
+    v.member_server_onion = JsonStringOrDefault(j, "member_server_onion");
+    v.role = JsonStringOrDefault(j, "role", "member");
+    v.status = JsonStringOrDefault(j, "status", "invited");
+    v.invited_by_address = JsonStringOrDefault(j, "invited_by_address");
+    v.invited_at = JsonStringOrDefault(j, "invited_at");
+    v.joined_at = JsonStringOrDefault(j, "joined_at");
+    v.left_at = JsonStringOrDefault(j, "left_at");
+    v.updated_at = JsonStringOrDefault(j, "updated_at");
+}
+
+inline void to_json(nlohmann::json& j, const ConversationRecipientDeviceOut& v) {
+    nlohmann::json prekey_json = nlohmann::json(nullptr);
+    if (v.prekey.has_value()) {
+        const auto& prekey = v.prekey.value();
+        prekey_json = nlohmann::json{
+            {"device_uid", prekey.device_uid},
+            {"pub_sign_key", prekey.pub_sign_key},
+            {"pub_dh_key", prekey.pub_dh_key},
+            {"supported_message_modes", prekey.supported_message_modes},
+            {"opk_missing", prekey.opk_missing},
+        };
+        if (prekey.signed_prekey.has_value()) {
+            prekey_json["signed_prekey"] = nlohmann::json{
+                {"key_id", prekey.signed_prekey->key_id},
+                {"pub_x25519_b64", prekey.signed_prekey->pub_x25519_b64},
+                {"sig_by_device_sign_key_b64", prekey.signed_prekey->sig_by_device_sign_key_b64},
+                {"expires_at", prekey.signed_prekey->expires_at},
+            };
+        } else {
+            prekey_json["signed_prekey"] = nullptr;
+        }
+        if (prekey.one_time_prekey.has_value()) {
+            prekey_json["one_time_prekey"] = nlohmann::json{
+                {"key_id", prekey.one_time_prekey->key_id},
+                {"pub_x25519_b64", prekey.one_time_prekey->pub_x25519_b64},
+            };
+        } else {
+            prekey_json["one_time_prekey"] = nullptr;
+        }
+    }
+    j = nlohmann::json{
+        {"member_address", v.member_address},
+        {"member_status", v.member_status},
+        {"device", v.device},
+        {"prekey", prekey_json},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationRecipientDeviceOut& v) {
+    v.member_address = j.value("member_address", "");
+    v.member_status = j.value("member_status", "active");
+    if (j.contains("device") && j.at("device").is_object()) {
+        j.at("device").get_to(v.device);
+    } else {
+        v.device = DeviceOut{};
+    }
+    if (j.contains("prekey") && !j.at("prekey").is_null()) {
+        const auto& prekey_json = j.at("prekey");
+        ResolvedPrekeyDevice prekey;
+        prekey.device_uid = prekey_json.value("device_uid", "");
+        prekey.pub_sign_key = prekey_json.value("pub_sign_key", "");
+        prekey.pub_dh_key = prekey_json.value("pub_dh_key", "");
+        prekey.supported_message_modes =
+            prekey_json.value("supported_message_modes", std::vector<std::string>{"sealedbox_v0_2a"});
+        prekey.opk_missing = prekey_json.value("opk_missing", false);
+        if (prekey_json.contains("signed_prekey") && !prekey_json.at("signed_prekey").is_null()) {
+            SignedPrekeyOut signed_prekey;
+            const auto& signed_prekey_json = prekey_json.at("signed_prekey");
+            signed_prekey.key_id = signed_prekey_json.value("key_id", 0);
+            signed_prekey.pub_x25519_b64 = signed_prekey_json.value("pub_x25519_b64", "");
+            signed_prekey.sig_by_device_sign_key_b64 = signed_prekey_json.value("sig_by_device_sign_key_b64", "");
+            signed_prekey.expires_at = signed_prekey_json.value("expires_at", "");
+            prekey.signed_prekey = signed_prekey;
+        } else {
+            prekey.signed_prekey.reset();
+        }
+        if (prekey_json.contains("one_time_prekey") && !prekey_json.at("one_time_prekey").is_null()) {
+            OneTimePrekeyOut one_time_prekey;
+            const auto& one_time_prekey_json = prekey_json.at("one_time_prekey");
+            one_time_prekey.key_id = one_time_prekey_json.value("key_id", 0);
+            one_time_prekey.pub_x25519_b64 = one_time_prekey_json.value("pub_x25519_b64", "");
+            prekey.one_time_prekey = one_time_prekey;
+        } else {
+            prekey.one_time_prekey.reset();
+        }
+        v.prekey = prekey;
+    } else {
+        v.prekey.reset();
+    }
+}
+
+inline void to_json(nlohmann::json& j, const ConversationRecipientsOut& v) {
+    j = nlohmann::json{
+        {"conversation_id", v.conversation_id},
+        {"conversation_type", v.conversation_type},
+        {"recipients", v.recipients},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationRecipientsOut& v) {
+    v.conversation_id = j.value("conversation_id", "");
+    v.conversation_type = j.value("conversation_type", "direct");
+    v.recipients = j.value("recipients", std::vector<ConversationRecipientDeviceOut>{});
 }
 
 inline void to_json(nlohmann::json& j, const CipherEnvelope& v) {
@@ -736,6 +1042,60 @@ inline void from_json(const nlohmann::json& j, ResolvePrekeysResponse& v) {
     }
 }
 
+inline void to_json(nlohmann::json& j, const PresenceSetRequest& v) {
+    j = nlohmann::json{
+        {"status", v.status},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PresenceSetRequest& v) {
+    v.status = j.value("status", "");
+}
+
+inline void to_json(nlohmann::json& j, const PresenceSetResponse& v) {
+    j = nlohmann::json{
+        {"status", v.status},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PresenceSetResponse& v) {
+    v.status = j.value("status", "");
+}
+
+inline void to_json(nlohmann::json& j, const PresenceResolveRequest& v) {
+    j = nlohmann::json{
+        {"peer_addresses", v.peer_addresses},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PresenceResolveRequest& v) {
+    v.peer_addresses = j.value("peer_addresses", std::vector<std::string>{});
+}
+
+inline void to_json(nlohmann::json& j, const PresencePeerOut& v) {
+    j = nlohmann::json{
+        {"peer_address", v.peer_address},
+        {"status", v.status},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PresencePeerOut& v) {
+    v.peer_address = j.value("peer_address", "");
+    v.status = j.value("status", "offline");
+}
+
+inline void to_json(nlohmann::json& j, const PresenceResolveResponse& v) {
+    j = nlohmann::json{
+        {"self_status", v.self_status},
+        {"peers", v.peers},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, PresenceResolveResponse& v) {
+    v.self_status = j.value("self_status", "offline");
+    v.peers = j.value("peers", std::vector<PresencePeerOut>{});
+}
+
 inline void from_json(const nlohmann::json& j, WsEventMessageNew& v) {
     v.copy_id = j.value("copy_id", "");
     j.at("message").get_to(v.message);
@@ -802,6 +1162,10 @@ inline void to_json(nlohmann::json& j, const VoiceCallWebRtcOffer& v) {
         {"call_schema_version", v.call_schema_version},
         {"call_mode", v.call_mode},
         {"max_participants", v.max_participants},
+        {"target_user_address", v.target_user_address.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(v.target_user_address)},
+        {"source_user_address", v.source_user_address.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(v.source_user_address)},
     };
 }
 
@@ -811,6 +1175,8 @@ inline void from_json(const nlohmann::json& j, VoiceCallWebRtcOffer& v) {
     v.call_schema_version = j.value("call_schema_version", 1);
     v.call_mode = j.value("call_mode", "webrtc");
     v.max_participants = j.value("max_participants", 2);
+    v.target_user_address = j.value("target_user_address", "");
+    v.source_user_address = j.value("source_user_address", "");
 }
 
 inline void to_json(nlohmann::json& j, const VoiceCallWebRtcAnswer& v) {
@@ -820,6 +1186,10 @@ inline void to_json(nlohmann::json& j, const VoiceCallWebRtcAnswer& v) {
         {"call_schema_version", v.call_schema_version},
         {"call_mode", v.call_mode},
         {"max_participants", v.max_participants},
+        {"target_user_address", v.target_user_address.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(v.target_user_address)},
+        {"source_user_address", v.source_user_address.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(v.source_user_address)},
     };
 }
 
@@ -829,6 +1199,8 @@ inline void from_json(const nlohmann::json& j, VoiceCallWebRtcAnswer& v) {
     v.call_schema_version = j.value("call_schema_version", 1);
     v.call_mode = j.value("call_mode", "webrtc");
     v.max_participants = j.value("max_participants", 2);
+    v.target_user_address = j.value("target_user_address", "");
+    v.source_user_address = j.value("source_user_address", "");
 }
 
 inline void to_json(nlohmann::json& j, const VoiceCallWebRtcIce& v) {
@@ -840,6 +1212,10 @@ inline void to_json(nlohmann::json& j, const VoiceCallWebRtcIce& v) {
         {"call_schema_version", v.call_schema_version},
         {"call_mode", v.call_mode},
         {"max_participants", v.max_participants},
+        {"target_user_address", v.target_user_address.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(v.target_user_address)},
+        {"source_user_address", v.source_user_address.empty() ? nlohmann::json(nullptr)
+                                                              : nlohmann::json(v.source_user_address)},
     };
 }
 
@@ -851,6 +1227,8 @@ inline void from_json(const nlohmann::json& j, VoiceCallWebRtcIce& v) {
     v.call_schema_version = j.value("call_schema_version", 1);
     v.call_mode = j.value("call_mode", "webrtc");
     v.max_participants = j.value("max_participants", 2);
+    v.target_user_address = j.value("target_user_address", "");
+    v.source_user_address = j.value("source_user_address", "");
 }
 
 inline void from_json(const nlohmann::json& j, WsEventCallIncoming& v) {
@@ -895,6 +1273,21 @@ inline void from_json(const nlohmann::json& j, WsEventCallEnded& v) {
     v.by_user_id = j.value("by_user_id", "");
 }
 
+inline void from_json(const nlohmann::json& j, WsEventCallGroupParticipant& v) {
+    v.member_address = j.value("member_address", "");
+    v.state = j.value("state", "");
+}
+
+inline void from_json(const nlohmann::json& j, WsEventCallGroupState& v) {
+    v.call_id = j.value("call_id", "");
+    v.conversation_id = j.value("conversation_id", "");
+    v.group_uid = j.value("group_uid", "");
+    v.state = j.value("state", "");
+    v.call_mode = j.value("call_mode", "webrtc");
+    v.max_participants = j.value("max_participants", 2);
+    v.participants = j.value("participants", std::vector<WsEventCallGroupParticipant>{});
+}
+
 inline void from_json(const nlohmann::json& j, WsEventCallAudio& v) {
     j.at("call_id").get_to(v.call_id);
     v.from_user_id = j.value("from_user_id", "");
@@ -914,7 +1307,9 @@ inline void from_json(const nlohmann::json& j, WsEventCallWebRtcOffer& v) {
     v.call_schema_version = j.value("call_schema_version", 1);
     v.call_mode = j.value("call_mode", "webrtc");
     v.max_participants = j.value("max_participants", 2);
-    v.from_user_address = j.value("from_user_address", "");
+    v.from_user_address = j.value("from_user_address", j.value("source_user_address", ""));
+    v.source_user_address = j.value("source_user_address", v.from_user_address);
+    v.target_user_address = j.value("target_user_address", "");
 }
 
 inline void from_json(const nlohmann::json& j, WsEventCallWebRtcAnswer& v) {
@@ -923,7 +1318,9 @@ inline void from_json(const nlohmann::json& j, WsEventCallWebRtcAnswer& v) {
     v.call_schema_version = j.value("call_schema_version", 1);
     v.call_mode = j.value("call_mode", "webrtc");
     v.max_participants = j.value("max_participants", 2);
-    v.from_user_address = j.value("from_user_address", "");
+    v.from_user_address = j.value("from_user_address", j.value("source_user_address", ""));
+    v.source_user_address = j.value("source_user_address", v.from_user_address);
+    v.target_user_address = j.value("target_user_address", "");
 }
 
 inline void from_json(const nlohmann::json& j, WsEventCallWebRtcIce& v) {
@@ -934,7 +1331,17 @@ inline void from_json(const nlohmann::json& j, WsEventCallWebRtcIce& v) {
     v.call_schema_version = j.value("call_schema_version", 1);
     v.call_mode = j.value("call_mode", "webrtc");
     v.max_participants = j.value("max_participants", 2);
-    v.from_user_address = j.value("from_user_address", "");
+    v.from_user_address = j.value("from_user_address", j.value("source_user_address", ""));
+    v.source_user_address = j.value("source_user_address", v.from_user_address);
+    v.target_user_address = j.value("target_user_address", "");
+}
+
+inline void from_json(const nlohmann::json& j, WsEventGroupRenamed& v) {
+    v.conversation_id = j.value("conversation_id", "");
+    v.group_uid = j.value("group_uid", "");
+    v.group_name = j.value("group_name", "");
+    v.actor_address = j.value("actor_address", "");
+    v.event_seq = j.value("event_seq", 0);
 }
 
 }  // namespace blackwire

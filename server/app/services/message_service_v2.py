@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.conversation import Conversation
+from app.models.conversation_member import ConversationMember
 from app.models.device import Device
 from app.models.message_device_copy import MessageDeviceCopy
 from app.models.message_event import MessageEvent
@@ -21,8 +23,10 @@ from app.schemas.v2_message import MessageSendRequestV2, SignedEnvelopeV2
 from app.services.conversation_service import conversation_service
 from app.services.device_service_v2 import device_service_v2
 from app.services.federation_outbox_service import federation_outbox_service
+from app.services.group_conversation_service import group_conversation_service
 from app.services.metrics import metrics
 from app.services.peer_address import parse_peer_address_with_policy
+from app.services.server_authority import is_local_server_authority
 from app.services.server_identity import get_server_onion, server_address_for_username
 from app.ws.manager import connection_manager
 
@@ -87,6 +91,52 @@ class MessageServiceV2:
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="AAD is too large",
             )
+
+    @staticmethod
+    def _envelope_storage_bytes(envelope_json: dict[str, Any]) -> int:
+        return len(json.dumps(envelope_json, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+
+    async def _pending_queue_usage(self, session: AsyncSession, recipient_device_uid: str) -> tuple[int, int]:
+        stmt = select(MessageDeviceCopy).where(
+            MessageDeviceCopy.recipient_device_uid == recipient_device_uid,
+            MessageDeviceCopy.status == "pending",
+        )
+        rows = list((await session.execute(stmt)).scalars().all())
+        pending_bytes = 0
+        for row in rows:
+            pending_bytes += self._envelope_storage_bytes(row.envelope_json)
+        return len(rows), pending_bytes
+
+    async def _enforce_pending_queue_limits(
+        self,
+        session: AsyncSession,
+        copy_candidates: list[tuple[str, dict[str, Any]]],
+    ) -> None:
+        usage_by_device: dict[str, tuple[int, int]] = {}
+        projected_by_device: dict[str, tuple[int, int]] = {}
+        for recipient_device_uid, envelope_json in copy_candidates:
+            projected_count, projected_bytes = projected_by_device.get(recipient_device_uid, (0, 0))
+            projected_by_device[recipient_device_uid] = (
+                projected_count + 1,
+                projected_bytes + self._envelope_storage_bytes(envelope_json),
+            )
+
+        for recipient_device_uid, (new_count, new_bytes) in projected_by_device.items():
+            if recipient_device_uid not in usage_by_device:
+                usage_by_device[recipient_device_uid] = await self._pending_queue_usage(session, recipient_device_uid)
+            existing_count, existing_bytes = usage_by_device[recipient_device_uid]
+            if existing_count + new_count > self.settings.pending_queue_max_copies_per_device:
+                await metrics.inc("attachments.send.rejected_queue_pressure")
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Recipient device pending queue copy limit exceeded",
+                )
+            if existing_bytes + new_bytes > self.settings.pending_queue_max_bytes_per_device:
+                await metrics.inc("attachments.send.rejected_queue_pressure")
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Recipient device pending queue byte limit exceeded",
+                )
 
     @staticmethod
     def _validate_encryption_mode(mode: str) -> str:
@@ -194,15 +244,60 @@ class MessageServiceV2:
         conversation: Conversation,
         sender: User,
         sender_device_uid: str,
-    ) -> list[tuple[str, str, str | None]]:
+        request_authority: str | None = None,
+    ) -> list[tuple[str, str, str | None, str | None]]:
         sender_address = server_address_for_username(sender.username)
-        targets: list[tuple[str, str, str | None]] = []
+        targets: list[tuple[str, str, str | None, str | None]] = []
 
         sender_devices = await device_service_v2.list_active_for_user(session, sender.id)
         for sender_device in sender_devices:
             if sender_device.id == sender_device_uid:
                 continue
-            targets.append((sender_address, sender_device.id, sender.id))
+            targets.append((sender_address, sender_device.id, sender.id, None))
+
+        if conversation.conversation_type == "group":
+            await group_conversation_service.ensure_member_access(session, conversation, sender.id, require_active=True)
+            member_rows = list(
+                (
+                    await session.execute(
+                        select(ConversationMember).where(
+                            ConversationMember.conversation_id == conversation.id,
+                            ConversationMember.status == "active",
+                        )
+                    )
+                ).scalars()
+            )
+            for member in member_rows:
+                if member.member_address == sender_address:
+                    continue
+                lookup = await device_service_v2.resolve_devices_by_peer_address(
+                    session,
+                    member.member_address,
+                    request_authority=request_authority,
+                )
+                if lookup is None or not lookup.devices:
+                    continue
+                parsed_remote = parse_peer_address_with_policy(lookup.peer_address, self.settings.tor_enabled)
+                additional_aliases = {request_authority} if request_authority else None
+                is_local = is_local_server_authority(parsed_remote.server_onion, self.settings, additional_aliases)
+                peer_onion = None if is_local else parsed_remote.server_onion
+                local_member_user_id = member.member_user_id
+                if is_local and local_member_user_id is None:
+                    peer_stmt = select(User).where(User.username == parsed_remote.username, User.disabled_at.is_(None))
+                    peer_user = (await session.execute(peer_stmt)).scalar_one_or_none()
+                    local_member_user_id = None if peer_user is None else peer_user.id
+                for device_out in lookup.devices:
+                    targets.append(
+                        (
+                            lookup.peer_address,
+                            device_out.device_uid,
+                            local_member_user_id if is_local else None,
+                            peer_onion,
+                        )
+                    )
+            if not targets:
+                targets.append((sender_address, sender_device_uid, sender.id, None))
+            return targets
 
         if conversation.kind == "local":
             peer_user_id = conversation_service.peer_id(conversation, sender.id)
@@ -213,7 +308,9 @@ class MessageServiceV2:
             peer_address = server_address_for_username(peer_user.username)
             peer_devices = await device_service_v2.list_active_for_user(session, peer_user_id)
             for peer_device in peer_devices:
-                targets.append((peer_address, peer_device.id, peer_user_id))
+                targets.append((peer_address, peer_device.id, peer_user_id, None))
+            if not targets:
+                targets.append((sender_address, sender_device_uid, sender.id, None))
             return targets
 
         if not conversation.peer_address or not conversation.peer_server_onion:
@@ -222,12 +319,54 @@ class MessageServiceV2:
         remote_resolution = await device_service_v2.resolve_devices_by_peer_address(
             session,
             conversation.peer_address,
+            request_authority=request_authority,
         )
         if remote_resolution is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remote peer devices not found")
+        try:
+            parsed_remote = parse_peer_address_with_policy(remote_resolution.peer_address, self.settings.tor_enabled)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        additional_aliases = {request_authority} if request_authority else None
+        if is_local_server_authority(parsed_remote.server_onion, self.settings, additional_aliases):
+            peer_stmt = select(User).where(User.username == parsed_remote.username, User.disabled_at.is_(None))
+            peer_user = (await session.execute(peer_stmt)).scalar_one_or_none()
+            if peer_user is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer user not found")
+            for local_device in remote_resolution.devices:
+                targets.append((remote_resolution.peer_address, local_device.device_uid, peer_user.id, None))
+            if not targets:
+                targets.append((sender_address, sender_device_uid, sender.id, None))
+            return targets
         for remote_device in remote_resolution.devices:
-            targets.append((remote_resolution.peer_address, remote_device.device_uid, None))
+            targets.append((remote_resolution.peer_address, remote_device.device_uid, None, parsed_remote.server_onion))
+        if not targets:
+            targets.append((sender_address, sender_device_uid, sender.id, None))
         return targets
+
+    async def _canonical_conversation_for_sender(
+        self,
+        session: AsyncSession,
+        conversation: Conversation,
+        sender: User,
+        request_authority: str | None = None,
+    ) -> Conversation:
+        if conversation.kind != "remote" or not conversation.peer_address:
+            return conversation
+        try:
+            parsed = parse_peer_address_with_policy(conversation.peer_address, self.settings.tor_enabled)
+        except ValueError:
+            return conversation
+        additional_aliases = {request_authority} if request_authority else None
+        if not is_local_server_authority(parsed.server_onion, self.settings, additional_aliases):
+            return conversation
+        return await conversation_service.create_dm(
+            session,
+            sender,
+            parsed.username,
+            None,
+            request_authority=request_authority,
+        )
 
     @staticmethod
     def _event_payload(event: MessageEvent, copy: MessageDeviceCopy) -> dict[str, Any]:
@@ -272,13 +411,14 @@ class MessageServiceV2:
     async def _validate_chain(
         self,
         session: AsyncSession,
-        payload: MessageSendRequestV2,
+        conversation_id: str,
+        sender_prev_hash: str,
         sender_device_uid: str,
     ) -> None:
         stmt = (
             select(MessageEvent)
             .where(
-                MessageEvent.conversation_id == payload.conversation_id,
+                MessageEvent.conversation_id == conversation_id,
                 MessageEvent.sender_device_uid == sender_device_uid,
             )
             .order_by(MessageEvent.created_at.desc())
@@ -286,7 +426,7 @@ class MessageServiceV2:
         )
         previous = (await session.execute(stmt)).scalar_one_or_none()
         expected_prev = previous.sender_chain_hash if previous is not None else ""
-        if payload.sender_prev_hash != expected_prev:
+        if sender_prev_hash != expected_prev:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="sender_prev_hash does not match latest chain value",
@@ -314,13 +454,22 @@ class MessageServiceV2:
         sender: User,
         sender_device: Device,
         payload: MessageSendRequestV2,
+        request_authority: str | None = None,
     ) -> tuple[MessageEvent, bool]:
         conversation = await conversation_service.get_by_id(session, payload.conversation_id)
         if conversation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-        conversation_service.ensure_membership(conversation, sender.id)
+        if conversation.conversation_type == "group":
+            await group_conversation_service.ensure_member_access(session, conversation, sender.id, require_active=True)
+        else:
+            conversation_service.ensure_membership(conversation, sender.id)
+        conversation = await self._canonical_conversation_for_sender(
+            session,
+            conversation,
+            sender,
+            request_authority=request_authority,
+        )
         encryption_mode = self._validate_encryption_mode(payload.encryption_mode)
-        self._enforce_encryption_policy(conversation.kind, encryption_mode)
 
         duplicate_stmt = select(MessageEvent).where(
             MessageEvent.sender_device_uid == sender_device.id,
@@ -332,8 +481,20 @@ class MessageServiceV2:
         had_prior_event = await self._has_prior_sender_event(session, conversation.id, sender_device.id)
 
         sender_address = server_address_for_username(sender.username)
-        expected_targets = await self._expected_targets_for_conversation(session, conversation, sender, sender_device.id)
-        expected_pairs = {(address, device_uid) for address, device_uid, _ in expected_targets}
+        expected_targets = await self._expected_targets_for_conversation(
+            session,
+            conversation,
+            sender,
+            sender_device.id,
+            request_authority=request_authority,
+        )
+        policy_scope = "remote" if conversation.kind == "remote" else "local"
+        if conversation.conversation_type == "group":
+            policy_scope = "remote" if any(peer_onion for _, _, _, peer_onion in expected_targets) else "local"
+        self._enforce_encryption_policy(policy_scope, encryption_mode)
+        if conversation.conversation_type == "group":
+            await metrics.inc("groups.messages.fanout_targets", len(expected_targets))
+        expected_pairs = {(address, device_uid) for address, device_uid, _, _ in expected_targets}
         envelope_pairs = {(env.recipient_user_address.strip().lower(), env.recipient_device_uid) for env in payload.envelopes}
         if envelope_pairs != expected_pairs:
             raise HTTPException(
@@ -341,7 +502,7 @@ class MessageServiceV2:
                 detail="Envelope recipients do not match expected active device fanout",
             )
 
-        await self._validate_chain(session, payload, sender_device.id)
+        await self._validate_chain(session, conversation.id, payload.sender_prev_hash, sender_device.id)
 
         envelope_hash_material: list[str] = []
         envelopes_by_target: dict[tuple[str, str], SignedEnvelopeV2] = {}
@@ -387,12 +548,14 @@ class MessageServiceV2:
         await session.flush()
 
         local_copies: list[MessageDeviceCopy] = []
-        remote_envelopes: list[dict[str, Any]] = []
-        remote_peer_onion = conversation.peer_server_onion if conversation.kind == "remote" else ""
-        for address, device_uid, recipient_user_id in expected_targets:
+        local_copy_candidates: list[tuple[str, str, dict[str, Any]]] = []
+        remote_envelopes_by_peer: dict[str, list[dict[str, Any]]] = {}
+        for address, device_uid, recipient_user_id, peer_onion in expected_targets:
             envelope = envelopes_by_target[(address, device_uid)]
             if recipient_user_id is None:
-                remote_envelopes.append(
+                if not peer_onion:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Remote target missing peer onion")
+                remote_envelopes_by_peer.setdefault(peer_onion, []).append(
                     {
                         "recipient_user_address": address,
                         "recipient_device_uid": device_uid,
@@ -407,20 +570,35 @@ class MessageServiceV2:
                 )
                 continue
 
+            envelope_json = {
+                "recipient_user_address": address,
+                "recipient_device_uid": device_uid,
+                "ciphertext_b64": envelope.ciphertext_b64,
+                "aad_b64": envelope.aad_b64,
+                "signature_b64": envelope.signature_b64,
+                "sender_device_pubkey": envelope.sender_device_pubkey,
+                "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
+                "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
+            }
+            local_copy_candidates.append(
+                (
+                    recipient_user_id,
+                    device_uid,
+                    envelope_json,
+                )
+            )
+
+        await self._enforce_pending_queue_limits(
+            session,
+            [(device_uid, envelope_json) for _, device_uid, envelope_json in local_copy_candidates],
+        )
+
+        for recipient_user_id, recipient_device_uid, envelope_json in local_copy_candidates:
             copy = MessageDeviceCopy(
                 message_event_id=message_event.id,
                 recipient_user_id=recipient_user_id,
-                recipient_device_uid=device_uid,
-                envelope_json={
-                    "recipient_user_address": address,
-                    "recipient_device_uid": device_uid,
-                    "ciphertext_b64": envelope.ciphertext_b64,
-                    "aad_b64": envelope.aad_b64,
-                    "signature_b64": envelope.signature_b64,
-                    "sender_device_pubkey": envelope.sender_device_pubkey,
-                    "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
-                    "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
-                },
+                recipient_device_uid=recipient_device_uid,
+                envelope_json=envelope_json,
                 status="pending",
                 expires_at=datetime.now(UTC) + timedelta(days=self.settings.message_ttl_days),
             )
@@ -440,7 +618,7 @@ class MessageServiceV2:
         if local_copies:
             await self._deliver_local_copies(session, local_copies, message_event)
 
-        if remote_envelopes and remote_peer_onion:
+        if remote_envelopes_by_peer:
             relay_payload = {
                 "relay_id": str(uuid4()),
                 "conversation_id": conversation.id,
@@ -452,19 +630,25 @@ class MessageServiceV2:
                 "sent_at_ms": payload.sent_at_ms,
                 "sender_prev_hash": payload.sender_prev_hash,
                 "sender_chain_hash": payload.sender_chain_hash,
-                "envelopes": remote_envelopes,
             }
-            dedupe_key = f"v2-message:{sender_device.id}:{payload.client_message_id}:{conversation.peer_address}"
-            outbox_item = await federation_outbox_service.enqueue(
-                session,
-                peer_onion=remote_peer_onion,
-                event_type="message.v2.relay",
-                endpoint_path="/api/v2/federation/messages/relay",
-                payload_json=relay_payload,
-                dedupe_key=dedupe_key,
-            )
-            await session.commit()
-            await federation_outbox_service.deliver_item(session, outbox_item.id)
+            if conversation.conversation_type == "group" and conversation.group_uid:
+                relay_payload["group_uid"] = conversation.group_uid
+            for peer_onion, remote_envelopes in remote_envelopes_by_peer.items():
+                payload_for_peer = dict(relay_payload)
+                payload_for_peer["envelopes"] = remote_envelopes
+                dedupe_key = f"v2-message:{sender_device.id}:{payload.client_message_id}:{conversation.id}:{peer_onion}"
+                outbox_item = await federation_outbox_service.enqueue(
+                    session,
+                    peer_onion=peer_onion,
+                    event_type="message.v2.relay",
+                    endpoint_path="/api/v2/federation/messages/relay",
+                    payload_json=payload_for_peer,
+                    dedupe_key=dedupe_key,
+                )
+                await session.commit()
+                await federation_outbox_service.deliver_item(session, outbox_item.id)
+            if conversation.conversation_type == "group":
+                await metrics.inc("groups.messages.relay_servers", len(remote_envelopes_by_peer))
 
         return message_event, False
 
@@ -480,7 +664,16 @@ class MessageServiceV2:
         conversation = await conversation_service.get_by_id(session, conversation_id)
         if conversation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-        conversation_service.ensure_membership(conversation, user.id)
+        member = None
+        if conversation.conversation_type == "group":
+            member = await group_conversation_service.ensure_member_access(
+                session,
+                conversation,
+                user.id,
+                require_active=True,
+            )
+        else:
+            conversation_service.ensure_membership(conversation, user.id)
 
         stmt = (
             select(MessageDeviceCopy, MessageEvent)
@@ -494,7 +687,10 @@ class MessageServiceV2:
             .offset(offset)
             .limit(limit)
         )
-        return list((await session.execute(stmt)).all())
+        rows = list((await session.execute(stmt)).all())
+        if conversation.conversation_type == "group" and member is not None and member.joined_at is not None:
+            rows = [row for row in rows if row[1].created_at >= member.joined_at]
+        return rows
 
     async def drain_pending_for_websocket(
         self,
@@ -575,58 +771,69 @@ class MessageServiceV2:
         # Ratchet sessions are tracked by (conversation, sender_device_uid) lifecycle.
         had_prior_event = False
 
-        # All relay envelopes must be addressed to the same local user address in v0.2a.
         first_address = payload.envelopes[0].recipient_user_address.strip().lower()
         first_parsed = parse_peer_address_with_policy(first_address, self.settings.tor_enabled)
         if first_parsed.server_onion != get_server_onion():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Recipient server mismatch")
 
-        user_stmt = select(User).where(User.username == first_parsed.username, User.disabled_at.is_(None))
-        recipient_user = (await session.execute(user_stmt)).scalar_one_or_none()
-        if recipient_user is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient user not found")
-
-        conversation = await conversation_service.get_or_create_remote_for_local_user(
-            session,
-            recipient_user,
-            payload.sender_address,
-        )
+        conversation: Conversation
+        group_member_by_address: dict[str, ConversationMember] = {}
+        if payload.group_uid:
+            group_conversation = await group_conversation_service.get_group_by_uid(session, payload.group_uid)
+            if group_conversation is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group conversation not found")
+            conversation = group_conversation
+            members = list(
+                (
+                    await session.execute(
+                        select(ConversationMember).where(
+                            ConversationMember.conversation_id == conversation.id,
+                            ConversationMember.status == "active",
+                        )
+                    )
+                ).scalars()
+            )
+            group_member_by_address = {row.member_address: row for row in members}
+        else:
+            user_stmt = select(User).where(User.username == first_parsed.username, User.disabled_at.is_(None))
+            recipient_user = (await session.execute(user_stmt)).scalar_one_or_none()
+            if recipient_user is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient user not found")
+            conversation = await conversation_service.get_or_create_remote_for_local_user(
+                session,
+                recipient_user,
+                payload.sender_address,
+            )
         had_prior_event = await self._has_prior_sender_event(session, conversation.id, payload.sender_device_uid)
         await self._validate_chain(
             session,
-            MessageSendRequestV2(
-                conversation_id=conversation.id,
-                encryption_mode=encryption_mode,
-                client_message_id=payload.client_message_id,
-                sent_at_ms=payload.sent_at_ms,
-                sender_prev_hash=payload.sender_prev_hash,
-                sender_chain_hash=payload.sender_chain_hash,
-                envelopes=[
-                    SignedEnvelopeV2(
-                        recipient_user_address=envelope.recipient_user_address,
-                        recipient_device_uid=envelope.recipient_device_uid,
-                        ciphertext_b64=envelope.ciphertext_b64,
-                        aad_b64=envelope.aad_b64,
-                        signature_b64=envelope.signature_b64,
-                        sender_device_pubkey=envelope.sender_device_pubkey,
-                        ratchet_header=envelope.ratchet_header,
-                        ratchet_init=envelope.ratchet_init,
-                    )
-                    for envelope in payload.envelopes
-                ],
-            ),
+            conversation.id,
+            payload.sender_prev_hash,
             payload.sender_device_uid,
         )
 
         envelope_hash_material: list[str] = []
         local_copies: list[MessageDeviceCopy] = []
+        local_copy_candidates: list[tuple[str, str, dict[str, Any]]] = []
         for envelope in payload.envelopes:
             parsed = parse_peer_address_with_policy(envelope.recipient_user_address, self.settings.tor_enabled)
-            if parsed.server_onion != get_server_onion() or parsed.username != recipient_user.username:
+            if parsed.server_onion != get_server_onion():
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid relay recipient")
+            recipient_user_id = ""
+            if payload.group_uid:
+                member = group_member_by_address.get(parsed.canonical)
+                if member is None or member.member_user_id is None:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid group relay recipient")
+                recipient_user_id = member.member_user_id
+            else:
+                user_stmt = select(User).where(User.username == parsed.username, User.disabled_at.is_(None))
+                recipient_user = (await session.execute(user_stmt)).scalar_one_or_none()
+                if recipient_user is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient user not found")
+                recipient_user_id = recipient_user.id
             device_stmt = select(Device).where(
                 Device.id == envelope.recipient_device_uid,
-                Device.user_id == recipient_user.id,
+                Device.user_id == recipient_user_id,
                 Device.status == "active",
                 Device.revoked_at.is_(None),
             )
@@ -662,24 +869,17 @@ class MessageServiceV2:
             envelope_hash_material.append(
                 f"{envelope.recipient_device_uid}:{ciphertext_hash}:{aad_hash}"
             )
-            copy = MessageDeviceCopy(
-                recipient_user_id=recipient_user.id,
-                recipient_device_uid=envelope.recipient_device_uid,
-                envelope_json={
-                    "recipient_user_address": envelope.recipient_user_address,
-                    "recipient_device_uid": envelope.recipient_device_uid,
-                    "ciphertext_b64": envelope.ciphertext_b64,
-                    "aad_b64": envelope.aad_b64,
-                    "signature_b64": envelope.signature_b64,
-                    "sender_device_pubkey": envelope.sender_device_pubkey,
-                    "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
-                    "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
-                },
-                status="pending",
-                expires_at=datetime.now(UTC) + timedelta(days=self.settings.message_ttl_days),
-                message_event_id="",
-            )
-            local_copies.append(copy)
+            envelope_json = {
+                "recipient_user_address": envelope.recipient_user_address,
+                "recipient_device_uid": envelope.recipient_device_uid,
+                "ciphertext_b64": envelope.ciphertext_b64,
+                "aad_b64": envelope.aad_b64,
+                "signature_b64": envelope.signature_b64,
+                "sender_device_pubkey": envelope.sender_device_pubkey,
+                "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
+                "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
+            }
+            local_copy_candidates.append((recipient_user_id, envelope.recipient_device_uid, envelope_json))
 
         expected_chain_hash = self._compute_chain_hash(
             payload.sender_prev_hash,
@@ -704,9 +904,19 @@ class MessageServiceV2:
         )
         session.add(event)
         await session.flush()
-        for copy in local_copies:
-            copy.message_event_id = event.id
+        await self._enforce_pending_queue_limits(session, [(device_uid, item) for _, device_uid, item in local_copy_candidates])
+
+        for recipient_user_id, recipient_device_uid, envelope_json in local_copy_candidates:
+            copy = MessageDeviceCopy(
+                recipient_user_id=recipient_user_id,
+                recipient_device_uid=recipient_device_uid,
+                envelope_json=envelope_json,
+                status="pending",
+                expires_at=datetime.now(UTC) + timedelta(days=self.settings.message_ttl_days),
+                message_event_id=event.id,
+            )
             session.add(copy)
+            local_copies.append(copy)
         await session.commit()
         await session.refresh(event)
 

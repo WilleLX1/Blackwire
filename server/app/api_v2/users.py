@@ -30,7 +30,11 @@ async def resolve_user_devices(
     context: AuthenticatedDeviceContextV2 = Depends(get_current_device_context_v2),
 ) -> UserDeviceLookupV2:
     await rate_limiter.enforce(client_rate_limit_key(request, f"v2-user-devices:{context.user.id}"))
-    result = await device_service_v2.resolve_devices_by_peer_address(session, peer_address)
+    result = await device_service_v2.resolve_devices_by_peer_address(
+        session,
+        peer_address,
+        request_authority=request.headers.get("host", "").strip().lower(),
+    )
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active devices not found")
     return result
@@ -44,4 +48,9 @@ async def resolve_user_prekeys(
     context: AuthenticatedDeviceContextV2 = Depends(get_current_device_context_v2),
 ) -> ResolvePrekeysResponseV2:
     await rate_limiter.enforce(client_rate_limit_key(request, f"v2-user-prekeys:{context.user.id}"))
-    return await prekey_service_v2.resolve_prekeys(session, context.user, peer_address)
+    return await prekey_service_v2.resolve_prekeys(
+        session,
+        context.user,
+        peer_address,
+        request_authority=request.headers.get("host", "").strip().lower(),
+    )

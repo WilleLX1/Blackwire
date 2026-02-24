@@ -96,3 +96,15 @@ TEST(EnvelopeSerializationTest, MessageOutDefaultsSenderAddressWhenMissing) {
     const auto message = json.get<blackwire::MessageOut>();
     EXPECT_TRUE(message.sender_address.empty());
 }
+
+TEST(EnvelopeSerializationTest, ConversationMemberOutParsesNullableFields) {
+    const auto json = nlohmann::json::parse(
+        R"({"id":"m1","member_user_id":null,"member_address":"alice@local.invalid","member_server_onion":"local.invalid","role":"member","status":"invited","invited_by_address":"bob@local.invalid","invited_at":"2026-02-24T10:00:00Z","joined_at":null,"left_at":null,"updated_at":"2026-02-24T10:00:00Z"})");
+
+    const auto member = json.get<blackwire::ConversationMemberOut>();
+    EXPECT_EQ(member.id, "m1");
+    EXPECT_TRUE(member.member_user_id.empty());
+    EXPECT_EQ(member.member_address, "alice@local.invalid");
+    EXPECT_TRUE(member.joined_at.empty());
+    EXPECT_TRUE(member.left_at.empty());
+}

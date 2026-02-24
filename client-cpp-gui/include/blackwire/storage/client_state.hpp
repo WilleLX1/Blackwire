@@ -15,6 +15,7 @@ struct LocalMessage {
     std::string id;
     std::string conversation_id;
     std::string sender_user_id;
+    std::string sender_address;
     std::string created_at;
     std::string rendered_text;
     std::string plaintext;
@@ -35,6 +36,7 @@ struct AudioPreferences {
 
 struct SocialPreferences {
     bool accept_messages_from_strangers = true;
+    std::string presence_status = "active";
 };
 
 struct ClientState {
@@ -63,6 +65,8 @@ inline void to_json(nlohmann::json& j, const LocalMessage& v) {
     j = nlohmann::json{{"id", v.id},
                        {"conversation_id", v.conversation_id},
                        {"sender_user_id", v.sender_user_id},
+                       {"sender_address", v.sender_address.empty() ? nlohmann::json(nullptr)
+                                                                   : nlohmann::json(v.sender_address)},
                        {"created_at", v.created_at},
                        {"rendered_text", v.rendered_text},
                        {"plaintext_cache_b64", v.plaintext_cache_b64.empty() ? nlohmann::json(nullptr)
@@ -82,6 +86,7 @@ inline void from_json(const nlohmann::json& j, LocalMessage& v) {
     j.at("id").get_to(v.id);
     j.at("conversation_id").get_to(v.conversation_id);
     j.at("sender_user_id").get_to(v.sender_user_id);
+    v.sender_address = j.value("sender_address", "");
     j.at("created_at").get_to(v.created_at);
     // Scrub any historical plaintext payload that may have been persisted.
     v.rendered_text = "[encrypted message]";
@@ -121,11 +126,13 @@ inline void from_json(const nlohmann::json& j, AudioPreferences& v) {
 inline void to_json(nlohmann::json& j, const SocialPreferences& v) {
     j = nlohmann::json{
         {"accept_messages_from_strangers", v.accept_messages_from_strangers},
+        {"presence_status", v.presence_status},
     };
 }
 
 inline void from_json(const nlohmann::json& j, SocialPreferences& v) {
     v.accept_messages_from_strangers = j.value("accept_messages_from_strangers", true);
+    v.presence_status = j.value("presence_status", "active");
 }
 
 inline void to_json(nlohmann::json& j, const ClientState& v) {

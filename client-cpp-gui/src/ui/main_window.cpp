@@ -58,8 +58,43 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
         controller_.SelectConversation(id);
     });
 
+    connect(chat_widget_, &ChatWidget::CreateGroupFromDmRequested, this, [this]() {
+        if (controller_.CreateGroupFromCurrentDm()) {
+            chat_widget_->ShowBanner("Group created.", "info");
+        }
+    });
+
+    connect(chat_widget_, &ChatWidget::GroupInviteDialogRequested, this, [this]() {
+        if (!controller_.IsSelectedConversationOwnerManagedGroup()) {
+            chat_widget_->ShowBanner("Only the group owner can invite members.", "warning");
+            return;
+        }
+        const auto picker = controller_.LoadInvitableContactsForCurrentGroup(QString());
+        chat_widget_->ShowGroupInviteDialog(picker);
+    });
+
+    connect(chat_widget_, &ChatWidget::InviteGroupMembersRequested, this, [this](const std::vector<QString>& addresses) {
+        if (controller_.InviteContactsToCurrentGroup(addresses)) {
+            chat_widget_->ShowBanner("Invites sent.", "info");
+        }
+    });
+
+    connect(chat_widget_, &ChatWidget::GroupRenameRequested, this, [this](const QString& name) {
+        if (controller_.RenameSelectedGroup(name)) {
+            chat_widget_->ShowBanner("Group name updated.", "info");
+        }
+    });
+
     connect(chat_widget_, &ChatWidget::SendMessageRequested, this, [this]() {
-        controller_.SendMessageToPeer(chat_widget_->PeerUsername(), chat_widget_->ComposeText());
+        controller_.SendMessageToPeer(QString(), chat_widget_->ComposeText());
+    });
+
+    connect(chat_widget_, &ChatWidget::SendFileRequested, this, [this](const QString& file_path) {
+        controller_.SendFileToPeer(QString(), file_path);
+    });
+
+    connect(chat_widget_, &ChatWidget::UserStatusChanged, this, [this](const QString& status) {
+        controller_.SetPresenceStatus(status);
     });
 
     connect(chat_widget_, &ChatWidget::StartVoiceCallRequested, this, [this]() {
@@ -217,6 +252,10 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
         chat_widget_->SetConnectionStatus(status);
         settings_dialog_->SetConnectionStatus(status);
         statusBar()->showMessage(status, 3000);
+    });
+
+    connect(&controller_, &ApplicationController::UserPresenceChanged, this, [this](const QString& status) {
+        chat_widget_->SetUserStatus(status);
     });
 
     connect(&controller_, &ApplicationController::CallStateChanged, this, [this](const CallStateView& state) {

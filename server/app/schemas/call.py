@@ -42,7 +42,9 @@ class CallWebRtcOfferRequest(BaseModel):
     sdp: str = Field(min_length=8, max_length=131072)
     call_schema_version: int = Field(default=1, ge=1)
     call_mode: str = Field(default="webrtc", max_length=32)
-    max_participants: int = Field(default=2, ge=2, le=2)
+    max_participants: int = Field(default=2, ge=2, le=8)
+    target_user_address: str = Field(default="", max_length=320)
+    source_user_address: str = Field(default="", max_length=320)
 
 
 class CallWebRtcAnswerRequest(BaseModel):
@@ -50,7 +52,9 @@ class CallWebRtcAnswerRequest(BaseModel):
     sdp: str = Field(min_length=8, max_length=131072)
     call_schema_version: int = Field(default=1, ge=1)
     call_mode: str = Field(default="webrtc", max_length=32)
-    max_participants: int = Field(default=2, ge=2, le=2)
+    max_participants: int = Field(default=2, ge=2, le=8)
+    target_user_address: str = Field(default="", max_length=320)
+    source_user_address: str = Field(default="", max_length=320)
 
 
 class CallWebRtcIceRequest(BaseModel):
@@ -60,4 +64,6 @@ class CallWebRtcIceRequest(BaseModel):
     sdp_mline_index: int | None = Field(default=None, ge=0)
     call_schema_version: int = Field(default=1, ge=1)
     call_mode: str = Field(default="webrtc", max_length=32)
-    max_participants: int = Field(default=2, ge=2, le=2)
+    max_participants: int = Field(default=2, ge=2, le=8)
+    target_user_address: str = Field(default="", max_length=320)
+    source_user_address: str = Field(default="", max_length=320)
