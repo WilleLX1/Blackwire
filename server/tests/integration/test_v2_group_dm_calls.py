@@ -590,3 +590,137 @@ def test_v2_group_send_allows_sender_fallback_when_no_other_active_targets(group
     )
     assert alice_messages.status_code == 200, alice_messages.text
     assert len(alice_messages.json()) == 1
+
+
+def test_v2_group_owner_leave_transfers_to_oldest_eligible_member(group_client: TestClient) -> None:
+    alice_register = _register_v2_user(group_client, "alice_leave_owner")
+    bob_register = _register_v2_user(group_client, "bob_leave_owner")
+    carol_register = _register_v2_user(group_client, "carol_leave_owner")
+
+    alice_material = _new_device_material("alice-leave-owner-device")
+    bob_material = _new_device_material("bob-leave-owner-device")
+    carol_material = _new_device_material("carol-leave-owner-device")
+
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
+    _register_device_v2(group_client, carol_register["tokens"]["bootstrap_token"], carol_material)
+
+    create_group = group_client.post(
+        "/api/v2/conversations/group",
+        headers=_auth_header(alice_tokens["access_token"]),
+        json={
+            "name": "Owner Transfer Room",
+            "member_addresses": ["bob_leave_owner@local.invalid", "carol_leave_owner@local.invalid"],
+        },
+    )
+    assert create_group.status_code == 200, create_group.text
+    conversation_id = create_group.json()["id"]
+
+    bob_accept = group_client.post(
+        f"/api/v2/conversations/{conversation_id}/invites/accept",
+        headers=_auth_header(bob_tokens["access_token"]),
+    )
+    assert bob_accept.status_code == 200, bob_accept.text
+
+    leave_owner = group_client.post(
+        f"/api/v2/conversations/{conversation_id}/leave",
+        headers=_auth_header(alice_tokens["access_token"]),
+    )
+    assert leave_owner.status_code == 200, leave_owner.text
+    assert leave_owner.json()["status"] == "left"
+
+    bob_conversations = group_client.get(
+        "/api/v2/conversations",
+        headers=_auth_header(bob_tokens["access_token"]),
+    )
+    assert bob_conversations.status_code == 200, bob_conversations.text
+    matching = [row for row in bob_conversations.json() if row["id"] == conversation_id]
+    assert len(matching) == 1
+    assert matching[0]["owner_address"] == "bob_leave_owner@local.invalid"
+    assert matching[0]["can_manage_members"] is True
+
+    members = group_client.get(
+        f"/api/v2/conversations/{conversation_id}/members",
+        headers=_auth_header(bob_tokens["access_token"]),
+    )
+    assert members.status_code == 200, members.text
+    member_by_address = {row["member_address"]: row for row in members.json()}
+    assert member_by_address["alice_leave_owner@local.invalid"]["status"] == "left"
+    assert member_by_address["alice_leave_owner@local.invalid"]["role"] == "member"
+    assert member_by_address["bob_leave_owner@local.invalid"]["status"] == "active"
+    assert member_by_address["bob_leave_owner@local.invalid"]["role"] == "owner"
+
+
+def test_v2_group_owner_leave_promotes_oldest_invited_when_no_active_non_owner(group_client: TestClient) -> None:
+    alice_register = _register_v2_user(group_client, "alice_leave_invited")
+    bob_register = _register_v2_user(group_client, "bob_leave_invited")
+
+    alice_material = _new_device_material("alice-leave-invited-device")
+    bob_material = _new_device_material("bob-leave-invited-device")
+
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
+
+    create_group = group_client.post(
+        "/api/v2/conversations/group",
+        headers=_auth_header(alice_tokens["access_token"]),
+        json={
+            "name": "Owner Transfer Invited Room",
+            "member_addresses": ["bob_leave_invited@local.invalid"],
+        },
+    )
+    assert create_group.status_code == 200, create_group.text
+    conversation_id = create_group.json()["id"]
+
+    leave_owner = group_client.post(
+        f"/api/v2/conversations/{conversation_id}/leave",
+        headers=_auth_header(alice_tokens["access_token"]),
+    )
+    assert leave_owner.status_code == 200, leave_owner.text
+    assert leave_owner.json()["status"] == "left"
+
+    members = group_client.get(
+        f"/api/v2/conversations/{conversation_id}/members",
+        headers=_auth_header(bob_tokens["access_token"]),
+    )
+    assert members.status_code == 200, members.text
+    member_by_address = {row["member_address"]: row for row in members.json()}
+    assert member_by_address["bob_leave_invited@local.invalid"]["role"] == "owner"
+    assert member_by_address["bob_leave_invited@local.invalid"]["status"] == "active"
+
+
+def test_v2_group_owner_leave_deletes_group_when_no_eligible_non_owner(group_client: TestClient) -> None:
+    alice_register = _register_v2_user(group_client, "alice_leave_delete")
+    alice_material = _new_device_material("alice-leave-delete-device")
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+
+    create_group = group_client.post(
+        "/api/v2/conversations/group",
+        headers=_auth_header(alice_tokens["access_token"]),
+        json={
+            "name": "Owner Delete Room",
+            "member_addresses": [],
+        },
+    )
+    assert create_group.status_code == 200, create_group.text
+    conversation_id = create_group.json()["id"]
+
+    leave_owner = group_client.post(
+        f"/api/v2/conversations/{conversation_id}/leave",
+        headers=_auth_header(alice_tokens["access_token"]),
+    )
+    assert leave_owner.status_code == 200, leave_owner.text
+    assert leave_owner.json()["status"] == "left"
+
+    list_after = group_client.get(
+        "/api/v2/conversations",
+        headers=_auth_header(alice_tokens["access_token"]),
+    )
+    assert list_after.status_code == 200, list_after.text
+    assert all(row["id"] != conversation_id for row in list_after.json())
+
+    members = group_client.get(
+        f"/api/v2/conversations/{conversation_id}/members",
+        headers=_auth_header(alice_tokens["access_token"]),
+    )
+    assert members.status_code == 404

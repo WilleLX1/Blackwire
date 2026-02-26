@@ -635,23 +635,119 @@ class GroupConversationService:
         await metrics.inc("groups.removed")
         return row
 
-    async def leave(self, session: AsyncSession, *, conversation: Conversation, user: User) -> ConversationMember:
+    async def leave(
+        self,
+        session: AsyncSession,
+        *,
+        conversation: Conversation,
+        user: User,
+        reason: str | None = None,
+    ) -> ConversationMember:
         member = await self.ensure_member_access(session, conversation, user.id, require_active=False)
-        if member.role == "owner" and member.status == "active":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Owner cannot leave")
         now = datetime.now(UTC)
+        actor_address = (member.member_address or server_address_for_username(user.username)).strip().lower()
+        leave_reason = (reason or "").strip() or "left"
+
+        if member.role == "owner" and member.status in {"active", "invited"}:
+            eligible_stmt = (
+                select(ConversationMember)
+                .where(
+                    ConversationMember.conversation_id == conversation.id,
+                    ConversationMember.role != "owner",
+                    ConversationMember.status.in_(("active", "invited")),
+                )
+                .order_by(ConversationMember.invited_at.asc(), ConversationMember.member_address.asc())
+                .limit(1)
+            )
+            replacement = (await session.execute(eligible_stmt)).scalar_one_or_none()
+
+            if replacement is not None:
+                member.role = "member"
+                member.status = "left"
+                member.left_at = now
+                member.updated_at = now
+
+                replacement.role = "owner"
+                replacement.status = "active"
+                if replacement.joined_at is None:
+                    replacement.joined_at = now
+                replacement.left_at = None
+                replacement.updated_at = now
+                conversation.owner_address = replacement.member_address
+
+                if conversation.origin_server_onion == get_server_onion():
+                    transfer_event = await self._serialize_event(
+                        session,
+                        conversation=conversation,
+                        event_type="transfer_owner",
+                        actor_address=actor_address,
+                        target_address=replacement.member_address,
+                        payload={
+                            "conversation_id": conversation.id,
+                            "group_uid": conversation.group_uid,
+                            "previous_owner_address": actor_address,
+                            "owner_address": replacement.member_address,
+                            "member_address": replacement.member_address,
+                        },
+                        created_at=now,
+                    )
+                    leave_event = await self._serialize_event(
+                        session,
+                        conversation=conversation,
+                        event_type="leave",
+                        actor_address=actor_address,
+                        target_address=actor_address,
+                        payload={
+                            "conversation_id": conversation.id,
+                            "group_uid": conversation.group_uid,
+                            "member_address": actor_address,
+                            "reason": leave_reason,
+                        },
+                        created_at=now,
+                    )
+                    await self._broadcast_events(session, conversation, [transfer_event, leave_event])
+
+                await session.commit()
+                await metrics.inc("groups.owner_transferred")
+                await metrics.inc("groups.left")
+                return member
+
+            synthetic = ConversationMember(
+                id=member.id,
+                conversation_id=member.conversation_id,
+                member_user_id=member.member_user_id,
+                member_address=member.member_address,
+                member_server_onion=member.member_server_onion,
+                role="member",
+                status="left",
+                invited_by_address=member.invited_by_address,
+                invited_at=member.invited_at,
+                joined_at=member.joined_at,
+                left_at=now,
+                updated_at=now,
+            )
+            await session.delete(conversation)
+            await session.commit()
+            await metrics.inc("groups.deleted_on_owner_leave")
+            await metrics.inc("groups.left")
+            return synthetic
+
         member.status = "left"
         member.left_at = now
         member.updated_at = now
         if conversation.origin_server_onion == get_server_onion():
-            actor_address = server_address_for_username(user.username)
             event = await self._serialize_event(
                 session,
                 conversation=conversation,
                 event_type="leave",
                 actor_address=actor_address,
                 target_address=actor_address,
-                payload={"conversation_id": conversation.id, "group_uid": conversation.group_uid, "member_address": actor_address},
+                payload={
+                    "conversation_id": conversation.id,
+                    "group_uid": conversation.group_uid,
+                    "member_address": actor_address,
+                    "reason": leave_reason,
+                },
                 created_at=now,
             )
             await self._broadcast_events(session, conversation, [event])
@@ -931,6 +1027,65 @@ class GroupConversationService:
             conversation.owner_address = str(payload.payload.get("owner_address", conversation.owner_address or payload.actor_address))
         if payload.event_type == "rename":
             conversation.group_name = str(payload.payload.get("group_name", conversation.group_name))
+        elif payload.event_type == "transfer_owner":
+            prior_owner_raw = (
+                str(payload.payload.get("previous_owner_address", payload.actor_address or "")).strip().lower()
+            )
+            next_owner_raw = str(
+                payload.payload.get("owner_address")
+                or payload.target_address
+                or payload.payload.get("member_address")
+                or ""
+            ).strip().lower()
+            if next_owner_raw:
+                parsed_next_owner = parse_peer_address_with_policy(next_owner_raw, self.settings.tor_enabled)
+                conversation.owner_address = parsed_next_owner.canonical
+
+                prior_owner_canonical = ""
+                if prior_owner_raw:
+                    try:
+                        prior_owner_canonical = parse_peer_address_with_policy(
+                            prior_owner_raw, self.settings.tor_enabled
+                        ).canonical
+                    except ValueError:
+                        prior_owner_canonical = ""
+
+                if prior_owner_canonical:
+                    prior_owner_stmt = select(ConversationMember).where(
+                        ConversationMember.conversation_id == conversation.id,
+                        ConversationMember.member_address == prior_owner_canonical,
+                    )
+                    prior_owner_row = (await session.execute(prior_owner_stmt)).scalar_one_or_none()
+                    if prior_owner_row is not None:
+                        prior_owner_row.role = "member"
+                        prior_owner_row.updated_at = created_at
+
+                next_owner_stmt = select(ConversationMember).where(
+                    ConversationMember.conversation_id == conversation.id,
+                    ConversationMember.member_address == parsed_next_owner.canonical,
+                )
+                next_owner_row = (await session.execute(next_owner_stmt)).scalar_one_or_none()
+                if next_owner_row is None:
+                    next_owner_row = ConversationMember(
+                        conversation_id=conversation.id,
+                        member_user_id=None,
+                        member_address=parsed_next_owner.canonical,
+                        member_server_onion=parsed_next_owner.server_onion,
+                        role="owner",
+                        status="active",
+                        invited_by_address=payload.actor_address,
+                        invited_at=created_at,
+                        joined_at=created_at,
+                        updated_at=created_at,
+                    )
+                    session.add(next_owner_row)
+                else:
+                    next_owner_row.role = "owner"
+                    next_owner_row.status = "active"
+                    if next_owner_row.joined_at is None:
+                        next_owner_row.joined_at = created_at
+                    next_owner_row.left_at = None
+                    next_owner_row.updated_at = created_at
         elif payload.event_type in {"invite", "accept", "remove", "leave", "create"}:
             target = payload.target_address or payload.actor_address or conversation.owner_address
             parsed = parse_peer_address_with_policy(target, self.settings.tor_enabled)
@@ -955,8 +1110,16 @@ class GroupConversationService:
                 session.add(row)
             else:
                 row.status = (
-                    "active" if payload.event_type == "accept" else "removed" if payload.event_type == "remove" else "left" if payload.event_type == "leave" else "invited"
+                    "active"
+                    if payload.event_type in {"accept", "create"}
+                    else "removed"
+                    if payload.event_type == "remove"
+                    else "left"
+                    if payload.event_type == "leave"
+                    else "invited"
                 )
+                if payload.event_type == "create":
+                    row.role = "owner"
                 row.updated_at = created_at
                 if row.status == "active":
                     row.joined_at = created_at

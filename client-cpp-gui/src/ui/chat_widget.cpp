@@ -359,10 +359,17 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     call_status_label_ = new QLabel("Idle", call_panel_);
     call_status_label_->setObjectName("callStatusPill");
     call_status_label_->setProperty("state", "idle");
+    call_participants_panel_ = new QWidget(call_panel_);
+    call_participants_panel_->setObjectName("callParticipantsPanel");
+    call_participants_layout_ = new QHBoxLayout(call_participants_panel_);
+    call_participants_layout_->setContentsMargins(0, 0, 0, 0);
+    call_participants_layout_->setSpacing(6);
     call_center_col->addWidget(call_panel_title_);
     call_center_col->addWidget(call_panel_subtitle_);
     call_center_col->addWidget(call_status_label_, 0, Qt::AlignLeft);
+    call_center_col->addWidget(call_participants_panel_, 0, Qt::AlignLeft);
     call_panel_layout->addLayout(call_center_col, 1);
+    call_participants_panel_->setVisible(false);
 
     auto* call_controls_row = new QHBoxLayout();
     call_controls_row->setSpacing(8);
@@ -619,7 +626,10 @@ void ChatWidget::SetSelectedConversation(const QString& conversation_id) {
     UpdateCallControls();
 }
 
-QWidget* ChatWidget::CreateConversationItemWidget(const ConversationListItemView& item, bool selected) const {
+QWidget* ChatWidget::CreateConversationItemWidget(
+    const ConversationListItemView& item,
+    bool selected,
+    bool removable) {
     auto* row = new QWidget();
     row->setObjectName("conversationRow");
     row->setProperty("selected", selected);
@@ -662,6 +672,24 @@ QWidget* ChatWidget::CreateConversationItemWidget(const ConversationListItemView
 
     layout->addLayout(text_col, 1);
     layout->addWidget(time);
+    if (removable) {
+        auto* remove_button = new QPushButton("x", row);
+        remove_button->setObjectName("conversationRemoveButton");
+        remove_button->setFixedSize(18, 18);
+        remove_button->setFocusPolicy(Qt::NoFocus);
+        remove_button->setToolTip(
+            item.conversation_type.trimmed().toLower() == "group"
+                ? "Leave group"
+                : "Remove DM");
+        connect(remove_button, &QPushButton::clicked, row, [this, item]() {
+            emit ConversationRemoveRequested(
+                item.id,
+                item.conversation_type.trimmed().toLower(),
+                item.can_manage_members,
+                item.title.trimmed());
+        });
+        layout->addWidget(remove_button, 0, Qt::AlignTop);
+    }
 
     return row;
 }
@@ -754,7 +782,7 @@ void ChatWidget::SetConversationList(const std::vector<ConversationListItemView>
         dm_item->setData(kRoleGroupName, item.group_name);
         dm_item->setData(kRoleMemberCount, item.member_count);
         dm_item->setSizeHint(QSize(200, 64));
-        auto* dm_row = CreateConversationItemWidget(item, item.id == selected_id);
+        auto* dm_row = CreateConversationItemWidget(item, item.id == selected_id, true);
         conversations_list_->setItemWidget(dm_item, dm_row);
 
         auto* contact_item = new QListWidgetItem(contacts_panel_list_);
@@ -770,7 +798,7 @@ void ChatWidget::SetConversationList(const std::vector<ConversationListItemView>
         contact_item->setSizeHint(QSize(200, 54));
         ConversationListItemView contact_view = item;
         contact_view.subtitle = QString("Status: %1").arg(NormalizePresenceStatus(item.status));
-        auto* contact_row = CreateConversationItemWidget(contact_view, item.id == selected_id);
+        auto* contact_row = CreateConversationItemWidget(contact_view, item.id == selected_id, false);
         contacts_panel_list_->setItemWidget(contact_item, contact_row);
 
         if (!selected_id.isEmpty() && item.id == selected_id) {
@@ -982,6 +1010,35 @@ void ChatWidget::UpdateCallControls() {
     }
     call_panel_title_->setText(QString("Voice with %1").arg(peer_title));
     call_panel_subtitle_->setText(FormatCallPanelSubtitle(call_state_));
+
+    while (call_participants_layout_ != nullptr && call_participants_layout_->count() > 0) {
+        QLayoutItem* item = call_participants_layout_->takeAt(0);
+        if (item == nullptr) {
+            continue;
+        }
+        if (item->widget() != nullptr) {
+            item->widget()->deleteLater();
+        }
+        delete item;
+    }
+    const bool show_participants = state == "active" && !call_state_.participants.empty();
+    if (show_participants && call_participants_layout_ != nullptr) {
+        for (const auto& participant : call_state_.participants) {
+            QString label = participant.label.trimmed();
+            if (label.isEmpty()) {
+                label = participant.user_address.trimmed();
+            }
+            if (label.isEmpty()) {
+                label = participant.self ? "You" : "Member";
+            }
+            auto* chip = new QLabel(label, call_participants_panel_);
+            chip->setObjectName("callParticipantChip");
+            chip->setProperty("self", participant.self);
+            call_participants_layout_->addWidget(chip);
+        }
+        call_participants_layout_->addStretch(1);
+    }
+    call_participants_panel_->setVisible(show_participants);
 
     QChar initial = peer_title.isEmpty() ? QChar('#') : peer_title.at(0).toUpper();
     call_panel_avatar_->setText(QString(initial));

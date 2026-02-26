@@ -292,6 +292,22 @@ QLabel#callPanelSubtitle {
     color: #c6cbd2;
 }
 
+QLabel#callParticipantChip {
+    background: #31353d;
+    border: 1px solid #1b1c20;
+    border-radius: 10px;
+    padding: 3px 8px;
+    color: #d6d9de;
+    font-size: 12px;
+}
+
+QLabel#callParticipantChip[self=\"true\"] {
+    background: #4250c7;
+    border-color: #4a57d8;
+    color: #ffffff;
+    font-weight: 600;
+}
+
 QLabel#chatBanner {
     border-radius: 8px;
     padding: 8px 10px;
@@ -358,6 +374,25 @@ QLabel#conversationSubtitle {
 QLabel#conversationTime {
     color: #9aa0aa;
     font-size: 11px;
+}
+
+QPushButton#conversationRemoveButton {
+    min-width: 18px;
+    max-width: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    border-radius: 9px;
+    border: 1px solid #2e3138;
+    background: #2c2f35;
+    color: #cfd3da;
+    padding: 0px;
+    font-weight: 600;
+}
+
+QPushButton#conversationRemoveButton:hover {
+    background: #c63237;
+    border-color: #b32f33;
+    color: #ffffff;
 }
 
 QLabel#presenceDot {

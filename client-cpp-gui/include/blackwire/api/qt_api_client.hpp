@@ -115,6 +115,11 @@ public:
         const std::string& access_token,
         const std::string& conversation_id) override;
 
+    ConversationMemberOut LeaveConversationGroup(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) override;
+
     ConversationRecipientsOut GetConversationRecipients(
         const std::string& base_url,
         const std::string& access_token,

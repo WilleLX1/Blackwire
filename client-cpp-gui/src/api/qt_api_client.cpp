@@ -381,6 +381,18 @@ ConversationMemberOut QtApiClient::AcceptConversationInvite(
     return json.get<ConversationMemberOut>();
 }
 
+ConversationMemberOut QtApiClient::LeaveConversationGroup(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id) {
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/conversations/%1/leave").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<ConversationMemberOut>();
+}
+
 ConversationRecipientsOut QtApiClient::GetConversationRecipients(
     const std::string& base_url,
     const std::string& access_token,

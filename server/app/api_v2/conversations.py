@@ -10,6 +10,7 @@ from app.schemas.v2_conversation import (
     CreateDMConversationRequestV2,
     CreateGroupConversationRequestV2,
     GroupInviteRequestV2,
+    GroupLeaveRequestV2,
     GroupRenameRequestV2,
 )
 from app.schemas.v2_message import MessageDeviceCopyOutV2, MessageEventOutV2
@@ -186,6 +187,7 @@ async def accept_invite(
 async def leave_group(
     conversation_id: str,
     request: Request,
+    payload: GroupLeaveRequestV2 | None = None,
     session: AsyncSession = Depends(db_session),
     context: AuthenticatedDeviceContextV2 = Depends(get_current_device_context_v2),
 ) -> ConversationMemberOutV2:
@@ -193,7 +195,12 @@ async def leave_group(
     conversation = await conversation_service.get_by_id(session, conversation_id)
     if conversation is None or conversation.conversation_type != "group":
         raise HTTPException(status_code=404, detail="Conversation not found")
-    row = await group_conversation_service.leave(session, conversation=conversation, user=context.user)
+    row = await group_conversation_service.leave(
+        session,
+        conversation=conversation,
+        user=context.user,
+        reason=(payload.reason if payload is not None else None),
+    )
     return group_conversation_service.member_out(row)
 
 

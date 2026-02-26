@@ -125,6 +125,11 @@ public:
         const std::string& access_token,
         const std::string& conversation_id) = 0;
 
+    virtual ConversationMemberOut LeaveConversationGroup(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) = 0;
+
     virtual ConversationRecipientsOut GetConversationRecipients(
         const std::string& base_url,
         const std::string& access_token,

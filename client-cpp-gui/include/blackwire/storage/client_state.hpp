@@ -54,6 +54,7 @@ struct ClientState {
     AudioPreferences audio_preferences;
     SocialPreferences social_preferences;
     std::set<std::string> blocked_conversation_ids;
+    std::set<std::string> dismissed_conversation_ids;
 
     bool MarkMessageSeen(const std::string& message_id) {
         const auto inserted = seen_message_ids.insert(message_id);
@@ -147,7 +148,8 @@ inline void to_json(nlohmann::json& j, const ClientState& v) {
                        {"last_verified_chain_hash_by_conversation_sender", v.last_verified_chain_hash_by_conversation_sender},
                        {"audio_preferences", v.audio_preferences},
                        {"social_preferences", v.social_preferences},
-                       {"blocked_conversation_ids", v.blocked_conversation_ids}};
+                       {"blocked_conversation_ids", v.blocked_conversation_ids},
+                       {"dismissed_conversation_ids", v.dismissed_conversation_ids}};
     if (v.has_user) {
         j["user"] = v.user;
     }
@@ -194,6 +196,9 @@ inline void from_json(const nlohmann::json& j, ClientState& v) {
     }
     if (j.contains("blocked_conversation_ids")) {
         j.at("blocked_conversation_ids").get_to(v.blocked_conversation_ids);
+    }
+    if (j.contains("dismissed_conversation_ids")) {
+        j.at("dismissed_conversation_ids").get_to(v.dismissed_conversation_ids);
     }
 }
 

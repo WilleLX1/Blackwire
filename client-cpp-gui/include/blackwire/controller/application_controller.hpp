@@ -52,6 +52,8 @@ public:
     void LoadConversations();
     void OpenConversationByPeer(const QString& username);
     void SelectConversation(const QString& conversation_id);
+    bool DismissDirectConversation(const QString& conversation_id);
+    bool LeaveGroupConversation(const QString& conversation_id);
     bool CreateGroupFromCurrentDm();
     GroupInvitePickerView LoadInvitableContactsForCurrentGroup(const QString& query);
     bool InviteContactsToCurrentGroup(const std::vector<QString>& peer_addresses);
@@ -130,6 +132,7 @@ private:
         const QString& group_name,
         const QString& dedupe_suffix);
     QString FormatCallDuration(qint64 duration_ms) const;
+    std::vector<CallParticipantView> BuildDirectCallParticipants(const QString& peer_user_id) const;
     void RefreshConversationList();
     QString RenderMessage(const MessageOut& message, const std::string& plaintext) const;
     std::vector<ThreadMessageView> RenderThread(const std::string& conversation_id) const;

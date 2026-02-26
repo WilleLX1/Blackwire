@@ -258,6 +258,9 @@ ApplicationController::ApplicationController(
                 local.created_at = msg.created_at;
                 local.rendered_text = RenderMessage(msg, plaintext).toStdString();
                 local.plaintext = plaintext;
+                if (state_.dismissed_conversation_ids.contains(msg.conversation_id)) {
+                    state_.dismissed_conversation_ids.erase(msg.conversation_id);
+                }
                 if (state_.blocked_conversation_ids.contains(msg.conversation_id)) {
                     PersistState();
                     return;
@@ -385,13 +388,34 @@ ApplicationController::ApplicationController(
                                              .trimmed()
                                              .toLower();
             QString self_participant_state;
+            std::vector<CallParticipantView> joined_participants;
+            joined_participants.reserve(event.participants.size());
             for (const auto& participant : event.participants) {
                 const QString participant_address = QString::fromStdString(participant.member_address).trimmed().toLower();
                 if (participant_address == self_address) {
                     self_participant_state = QString::fromStdString(participant.state).trimmed().toLower();
-                    break;
                 }
+                const QString participant_state = QString::fromStdString(participant.state).trimmed().toLower();
+                if (participant_state != "joined") {
+                    continue;
+                }
+                const bool participant_is_self = participant_address == self_address;
+                joined_participants.push_back(CallParticipantView{
+                    participant_address,
+                    participant_is_self ? "You" : UsernameFromAddress(participant_address),
+                    participant_is_self,
+                });
             }
+            std::sort(
+                joined_participants.begin(),
+                joined_participants.end(),
+                [](const CallParticipantView& lhs, const CallParticipantView& rhs) {
+                    if (lhs.self != rhs.self) {
+                        return lhs.self > rhs.self;
+                    }
+                    return lhs.label.trimmed().toLower() < rhs.label.trimmed().toLower();
+                }
+            );
 
             if (state == "ringing") {
                 if (self_participant_state == "left" ||
@@ -518,6 +542,7 @@ ApplicationController::ApplicationController(
                     conversation_id,
                     title,
                     QString());
+                call_state_.participants = joined_participants;
                 call_state_.reason = "Group call active";
                 EmitCallState();
 
@@ -613,6 +638,8 @@ ApplicationController::ApplicationController(
                 QString::fromStdString(
                     event.peer_user_address.empty() ? event.peer_user_id : event.peer_user_address),
                 QString());
+            call_state_.participants = BuildDirectCallParticipants(call_state_.peer_user_id);
+            EmitCallState();
 
             const bool webrtc_enabled = EnvFlagEnabled("BLACKWIRE_ENABLE_WEBRTC_V2B2", false) ||
                                         event.call_mode == "webrtc";
@@ -1289,6 +1316,24 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
 
         std::string error;
         const auto private_key = secret_store_.GetSecret(SecretKey("enc_private"), &error);
+        auto parse_time = [](const std::string& value) {
+            const QString iso = QString::fromStdString(value);
+            QDateTime parsed = QDateTime::fromString(iso, Qt::ISODateWithMs);
+            if (!parsed.isValid()) {
+                parsed = QDateTime::fromString(iso, Qt::ISODate);
+            }
+            return parsed;
+        };
+        QDateTime oldest_remote_time;
+        for (const auto& message : remote_messages) {
+            const QDateTime created = parse_time(message.created_at);
+            if (!created.isValid()) {
+                continue;
+            }
+            if (!oldest_remote_time.isValid() || created < oldest_remote_time) {
+                oldest_remote_time = created;
+            }
+        }
 
         for (const auto& message : remote_messages) {
             auto existing = existing_by_id.find(message.id);
@@ -1343,8 +1388,16 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                 if (rebuilt_ids.contains(existing.id)) {
                     continue;
                 }
-                // Server listing is device-copy scoped, so self-sent messages may be absent.
-                if (existing.sender_user_id == state_.user.id) {
+                // Server listing is device-copy scoped and paginated, so preserve
+                // self/system/older-cached entries that are not in this window.
+                const bool self_sent = existing.sender_user_id == state_.user.id;
+                const bool local_system_entry = existing.sender_user_id.empty();
+                bool older_than_fetch_window = false;
+                if (oldest_remote_time.isValid()) {
+                    const QDateTime existing_time = parse_time(existing.created_at);
+                    older_than_fetch_window = existing_time.isValid() && existing_time < oldest_remote_time;
+                }
+                if (self_sent || local_system_entry || older_than_fetch_window) {
                     LocalMessage carry = existing;
                     if (carry.sender_address.empty()) {
                         carry.sender_address = self_address.toStdString();
@@ -1353,15 +1406,6 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                 }
             }
         }
-
-        auto parse_time = [](const std::string& value) {
-            const QString iso = QString::fromStdString(value);
-            QDateTime parsed = QDateTime::fromString(iso, Qt::ISODateWithMs);
-            if (!parsed.isValid()) {
-                parsed = QDateTime::fromString(iso, Qt::ISODate);
-            }
-            return parsed;
-        };
         std::stable_sort(rebuilt.begin(), rebuilt.end(), [&parse_time](const LocalMessage& lhs, const LocalMessage& rhs) {
             const QDateTime lhs_time = parse_time(lhs.created_at);
             const QDateTime rhs_time = parse_time(rhs.created_at);
@@ -1395,6 +1439,93 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
         const QString line = QString("Select conversation failed: %1").arg(ex.what());
         RecordDiagnostic(line);
         emit ErrorOccurred(line);
+    }
+}
+
+bool ApplicationController::DismissDirectConversation(const QString& conversation_id) {
+    try {
+        const std::string conversation_key = conversation_id.trimmed().toStdString();
+        if (conversation_key.empty()) {
+            return false;
+        }
+        const ConversationOut* selected = FindConversation(conversation_key);
+        if (selected == nullptr || selected->conversation_type != "direct") {
+            emit ErrorOccurred("Only direct messages can be dismissed.");
+            return false;
+        }
+
+        state_.dismissed_conversation_ids.insert(conversation_key);
+        state_.local_messages.erase(conversation_key);
+        state_.conversation_meta.erase(conversation_key);
+        pending_request_messages_.erase(conversation_key);
+        pending_request_senders_.erase(conversation_key);
+
+        if (selected_conversation_id_ == conversation_key) {
+            selected_conversation_id_.clear();
+            emit ConversationSelected(QString(), {});
+        }
+
+        PersistState();
+        RefreshConversationList();
+        RecordDiagnostic(QString("dismissed direct conversation id=%1").arg(conversation_id));
+        return true;
+    } catch (const std::exception& ex) {
+        const QString line = QString("Dismiss direct conversation failed: %1").arg(ex.what());
+        RecordDiagnostic(line);
+        emit ErrorOccurred(line);
+        return false;
+    }
+}
+
+bool ApplicationController::LeaveGroupConversation(const QString& conversation_id) {
+    try {
+        const std::string conversation_key = conversation_id.trimmed().toStdString();
+        if (conversation_key.empty()) {
+            return false;
+        }
+        const ConversationOut* selected = FindConversation(conversation_key);
+        if (selected == nullptr || selected->conversation_type != "group") {
+            emit ErrorOccurred("Only group conversations can be left.");
+            return false;
+        }
+
+        const auto operation = [this, &conversation_key]() {
+            return api_client_.LeaveConversationGroup(
+                state_.base_url,
+                RequireAccessToken(),
+                conversation_key);
+        };
+        (void)CallWithAuthRetryOnce<ConversationMemberOut>(operation, [this]() { RefreshAccessToken(); });
+
+        state_.local_messages.erase(conversation_key);
+        state_.conversation_meta.erase(conversation_key);
+        state_.blocked_conversation_ids.erase(conversation_key);
+        state_.dismissed_conversation_ids.erase(conversation_key);
+        pending_request_messages_.erase(conversation_key);
+        pending_request_senders_.erase(conversation_key);
+
+        if (selected_conversation_id_ == conversation_key) {
+            selected_conversation_id_.clear();
+            emit ConversationSelected(QString(), {});
+        }
+
+        LoadConversations();
+        RecordDiagnostic(QString("left group conversation id=%1").arg(conversation_id));
+        return true;
+    } catch (const ApiException& ex) {
+        QString message = QString::fromStdString(ex.what());
+        if (ex.status_code() == 404 && message.contains("disabled", Qt::CaseInsensitive)) {
+            message = "Group DMs are disabled on this federation.";
+        }
+        const QString line = QString("Leave group conversation failed: %1").arg(message);
+        RecordDiagnostic(line);
+        emit ErrorOccurred(message);
+        return false;
+    } catch (const std::exception& ex) {
+        const QString line = QString("Leave group conversation failed: %1").arg(ex.what());
+        RecordDiagnostic(line);
+        emit ErrorOccurred(line);
+        return false;
     }
 }
 
@@ -1506,11 +1637,11 @@ GroupInvitePickerView ApplicationController::LoadInvitableContactsForCurrentGrou
         std::unordered_set<std::string> active_or_invited_identities;
         for (const auto& member : members) {
             const std::string normalized = QString::fromStdString(member.member_address).trimmed().toLower().toStdString();
-            if (!normalized.empty()) {
-                excluded_addresses.insert(normalized);
-            }
             const QString status = QString::fromStdString(member.status).trimmed().toLower();
             if (status == "active" || status == "invited") {
+                if (!normalized.empty()) {
+                    excluded_addresses.insert(normalized);
+                }
                 const QString identity = !member.member_user_id.empty()
                                              ? QString("user:%1")
                                                    .arg(QString::fromStdString(member.member_user_id).trimmed().toLower())
@@ -2858,6 +2989,9 @@ void ApplicationController::RefreshPresenceCache() {
         if (state_.blocked_conversation_ids.contains(conversation.id)) {
             continue;
         }
+        if (conversation.conversation_type == "direct" && state_.dismissed_conversation_ids.contains(conversation.id)) {
+            continue;
+        }
         const QString peer = ResolvePeerAddressForConversation(conversation.id);
         if (peer.isEmpty()) {
             continue;
@@ -2895,6 +3029,9 @@ void ApplicationController::RefreshConversationList() {
 
     for (const auto& conv : state_.conversations) {
         if (state_.blocked_conversation_ids.contains(conv.id)) {
+            continue;
+        }
+        if (conv.conversation_type == "direct" && state_.dismissed_conversation_ids.contains(conv.id)) {
             continue;
         }
         if (pending_request_senders_.find(conv.id) != pending_request_senders_.end()) {
@@ -3107,6 +3244,7 @@ void ApplicationController::RevealConversation(const std::string& conversation_i
     }
 
     state_.blocked_conversation_ids.erase(conversation_id);
+    state_.dismissed_conversation_ids.erase(conversation_id);
 
     const auto* conversation = FindConversation(conversation_id);
     if (conversation != nullptr && (!conversation->peer_username.empty() || !conversation->peer_address.empty())) {
@@ -3226,6 +3364,47 @@ QString ApplicationController::FormatCallDuration(qint64 duration_ms) const {
         return QString("%1 minutes").arg(minutes);
     }
     return QString("%1 seconds").arg(seconds);
+}
+
+std::vector<CallParticipantView> ApplicationController::BuildDirectCallParticipants(const QString& peer_user_id) const {
+    std::vector<CallParticipantView> participants;
+    participants.reserve(2);
+
+    const QString local_server = QString::fromStdString(
+                                     state_.user.home_server_onion.empty()
+                                         ? ServerAuthority().toStdString()
+                                         : state_.user.home_server_onion)
+                                     .trimmed()
+                                     .toLower();
+    const QString self_address = QString("%1@%2")
+                                     .arg(QString::fromStdString(state_.user.username).trimmed().toLower(), local_server)
+                                     .trimmed()
+                                     .toLower();
+    participants.push_back(CallParticipantView{
+        self_address,
+        "You",
+        true,
+    });
+
+    const QString peer = peer_user_id.trimmed().toLower();
+    if (peer.isEmpty()) {
+        return participants;
+    }
+
+    QString peer_label = peer;
+    if (peer.contains('@')) {
+        peer_label = peer.section('@', 0, 0).trimmed();
+    }
+    if (peer_label.isEmpty()) {
+        peer_label = "Peer";
+    }
+
+    participants.push_back(CallParticipantView{
+        peer,
+        peer_label,
+        false,
+    });
+    return participants;
 }
 
 void ApplicationController::AppendCallHistoryEntry(const QString& reason) {
@@ -3365,6 +3544,7 @@ void ApplicationController::TransitionCallState(
     const QString& peer_user_id,
     const QString& reason) {
     const QString previous_state = call_state_.state.trimmed().toLower();
+    const QString previous_call_id = call_state_.call_id;
     const QString next_state = state.trimmed().isEmpty() ? "idle" : state.trimmed().toLower();
     if (next_state == "idle" && previous_state != "idle") {
         AppendCallHistoryEntry(reason);
@@ -3388,6 +3568,9 @@ void ApplicationController::TransitionCallState(
     call_state_.conversation_id = conversation_id;
     call_state_.peer_user_id = peer_user_id;
     call_state_.reason = reason;
+    if (next_state != "active" || (!previous_call_id.isEmpty() && previous_call_id != call_id)) {
+        call_state_.participants.clear();
+    }
 
     if (IsCallState("idle") || IsCallState("incoming_ringing") || IsCallState("outgoing_ringing")) {
         call_state_.muted = false;

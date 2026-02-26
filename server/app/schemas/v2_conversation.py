@@ -38,6 +38,10 @@ class GroupRenameRequestV2(BaseModel):
     name: str = Field(min_length=1, max_length=128)
 
 
+class GroupLeaveRequestV2(BaseModel):
+    reason: str | None = Field(default=None, max_length=64)
+
+
 class ConversationOutV2(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -85,6 +85,45 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
         }
     });
 
+    connect(
+        chat_widget_,
+        &ChatWidget::ConversationRemoveRequested,
+        this,
+        [this](const QString& conversation_id, const QString& conversation_type, bool can_manage_members, const QString& title) {
+            const QString id = conversation_id.trimmed();
+            if (id.isEmpty()) {
+                return;
+            }
+            const QString normalized_type = conversation_type.trimmed().toLower();
+            if (normalized_type == "group") {
+                const QString question = can_manage_members
+                                             ? "Leave this group? Ownership will be transferred automatically if needed."
+                                             : "Leave this group?";
+                const auto answer = QMessageBox::question(
+                    this,
+                    "Leave Group",
+                    question);
+                if (answer != QMessageBox::Yes) {
+                    return;
+                }
+                if (controller_.LeaveGroupConversation(id)) {
+                    chat_widget_->ShowBanner("Left group DM.", "info");
+                }
+                return;
+            }
+
+            const auto answer = QMessageBox::question(
+                this,
+                "Remove DM",
+                QString("Remove %1 from Messages? This only clears local cache.").arg(title.trimmed().isEmpty() ? "this DM" : title));
+            if (answer != QMessageBox::Yes) {
+                return;
+            }
+            if (controller_.DismissDirectConversation(id)) {
+                chat_widget_->ShowBanner("DM removed from Messages.", "info");
+            }
+        });
+
     connect(chat_widget_, &ChatWidget::SendMessageRequested, this, [this]() {
         controller_.SendMessageToPeer(QString(), chat_widget_->ComposeText());
     });

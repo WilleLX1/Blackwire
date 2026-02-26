@@ -14,6 +14,7 @@ class QPushButton;
 class QComboBox;
 class QStackedWidget;
 class QTimer;
+class QHBoxLayout;
 class QWidget;
 
 namespace blackwire {
@@ -45,6 +46,11 @@ public:
 signals:
     void NewConversationRequested();
     void ConversationSelected(const QString& conversation_id);
+    void ConversationRemoveRequested(
+        const QString& conversation_id,
+        const QString& conversation_type,
+        bool can_manage_members,
+        const QString& title);
     void SendMessageRequested();
     void SendFileRequested(const QString& file_path);
     void SettingsRequested();
@@ -61,7 +67,7 @@ signals:
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
-    QWidget* CreateConversationItemWidget(const ConversationListItemView& item, bool selected) const;
+    QWidget* CreateConversationItemWidget(const ConversationListItemView& item, bool selected, bool removable);
     QWidget* CreateThreadMessageWidget(const ThreadMessageView& message) const;
     bool IsTimelineNearBottom() const;
     void ScrollTimelineToBottom();
@@ -99,6 +105,8 @@ private:
     QLabel* call_panel_avatar_;
     QLabel* call_panel_title_;
     QLabel* call_panel_subtitle_;
+    QWidget* call_participants_panel_;
+    QHBoxLayout* call_participants_layout_;
     QPushButton* call_button_;
     QPushButton* group_button_;
     QPushButton* invite_button_;

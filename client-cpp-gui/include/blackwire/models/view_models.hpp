@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <QString>
 
 namespace blackwire {
@@ -34,6 +36,12 @@ struct AudioDeviceOptionView {
     QString name;
 };
 
+struct CallParticipantView {
+    QString user_address;
+    QString label;
+    bool self = false;
+};
+
 struct CallStateView {
     QString state = "idle";
     QString call_id;
@@ -41,6 +49,7 @@ struct CallStateView {
     QString peer_user_id;
     bool muted = false;
     QString reason;
+    std::vector<CallParticipantView> participants;
 };
 
 struct ThreadMessageView {
