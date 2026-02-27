@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blackwire v0.2 | Security-First Federated Messaging</title>
+  <meta
+    name="description"
+    content="Blackwire v0.2 adds signed device envelopes, multi-device revoke, device-bound JWT auth, ratchet prekeys, and WebRTC migration."
+  />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    :root {
+      --bg: #f7f4ec;
+      --bg-accent: #e9f3ef;
+      --surface: #fffdf8;
+      --line: #eadfcd;
+      --ink: #1f2937;
+      --muted: #5b6472;
+      --brand: #0f766e;
+      --brand-soft: #d7f1ec;
+      --signal: #c2410c;
+      --signal-soft: #ffe6d7;
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --shadow: 0 20px 45px rgba(20, 39, 37, 0.09);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Sora", "Segoe UI", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 5%, rgba(15, 118, 110, 0.14), transparent 30%),
+        radial-gradient(circle at 92% 10%, rgba(194, 65, 12, 0.12), transparent 35%),
+        linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
+      line-height: 1.6;
+    }
+
+    .page-bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(rgba(234, 223, 205, 0.4) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(234, 223, 205, 0.4) 1px, transparent 1px);
+      background-size: 36px 36px;
+      mask-image: radial-gradient(circle at 50% 20%, black, transparent 75%);
+      z-index: -1;
+    }
+
+    .container {
+      width: min(1120px, calc(100% - 2rem));
+      margin: 0 auto;
+    }
+
+    .nav-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(12px);
+      background: rgba(247, 244, 236, 0.82);
+      border-bottom: 1px solid rgba(15, 118, 110, 0.1);
+    }
+
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 0;
+      gap: 1rem;
+    }
+
+    .brand {
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--brand);
+      font-size: 0.95rem;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      transition: background-color 180ms ease, color 180ms ease;
+    }
+
+    .nav-links a:hover {
+      background: var(--brand-soft);
+      color: var(--brand);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 2rem;
+      align-items: center;
+      padding: 4rem 0 2.5rem;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      background: var(--brand-soft);
+      color: var(--brand);
+      border: 1px solid rgba(15, 118, 110, 0.22);
+      padding: 0.35rem 0.65rem;
+      border-radius: 999px;
+      margin-bottom: 1rem;
+    }
+
+    .hero h1 {
+      margin: 0 0 1rem;
+      line-height: 1.12;
+      font-size: clamp(1.8rem, 4.4vw, 3.6rem);
+      letter-spacing: -0.02em;
+      max-width: 15ch;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 55ch;
+    }
+
+    .cta {
+      margin-top: 1.5rem;
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      border-radius: 999px;
+      padding: 0.72rem 1.05rem;
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-decoration: none;
+      border: 1px solid transparent;
+      transition: transform 160ms ease, box-shadow 200ms ease, background-color 200ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button.primary {
+      background: var(--brand);
+      color: #f6fffd;
+      box-shadow: 0 10px 20px rgba(15, 118, 110, 0.3);
+    }
+
+    .button.ghost {
+      border-color: rgba(15, 118, 110, 0.35);
+      color: var(--brand);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .terminal {
+      background: #162021;
+      color: #d4eceb;
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .terminal-head {
+      display: flex;
+      gap: 0.42rem;
+      padding: 0.72rem 0.85rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #708080;
+    }
+
+    .dot:nth-child(1) {
+      background: #f59e0b;
+    }
+
+    .dot:nth-child(2) {
+      background: #f97316;
+    }
+
+    .dot:nth-child(3) {
+      background: #10b981;
+    }
+
+    .terminal pre {
+      margin: 0;
+      padding: 1rem;
+      font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+      font-size: 0.81rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .section {
+      padding: 2.4rem 0;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(1.35rem, 2.5vw, 2.05rem);
+      letter-spacing: -0.015em;
+    }
+
+    .section-sub {
+      margin: 0;
+      color: var(--muted);
+      max-width: 64ch;
+      font-size: 0.95rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .cards {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 1rem;
+      box-shadow: 0 10px 22px rgba(16, 24, 40, 0.05);
+    }
+
+    .card h3 {
+      margin: 0 0 0.45rem;
+      font-size: 1rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .api-list {
+      columns: 2;
+      gap: 2rem;
+      padding: 1rem;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      margin: 0;
+      list-style: none;
+    }
+
+    .api-list li {
+      break-inside: avoid;
+      margin: 0 0 0.4rem;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 0.84rem;
+      color: #283540;
+    }
+
+    .step-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      counter-reset: step;
+    }
+
+    .step {
+      position: relative;
+      padding: 1rem;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(194, 65, 12, 0.24);
+      background: #fff7f1;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: "0" counter(step);
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      font-size: 0.73rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      color: var(--signal);
+    }
+
+    .step h3 {
+      margin: 0 0 0.4rem;
+      font-size: 0.95rem;
+      color: #7c2d12;
+    }
+
+    .step code {
+      display: block;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 0.8rem;
+      margin-top: 0.2rem;
+      color: #9a3412;
+    }
+
+    .status {
+      margin-top: 1rem;
+      padding: 1rem;
+      border-radius: var(--radius-md);
+      background: #fdf2e9;
+      border: 1px solid #f8cfaf;
+      font-size: 0.9rem;
+      color: #7c2d12;
+    }
+
+    footer {
+      padding: 2rem 0 2.6rem;
+      font-size: 0.86rem;
+      color: var(--muted);
+      border-top: 1px solid rgba(15, 118, 110, 0.12);
+      margin-top: 1.2rem;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 500ms ease, transform 500ms ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 980px) {
+      .hero {
+        grid-template-columns: 1fr;
+        padding-top: 3.2rem;
+      }
+
+      .cards {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 700px) {
+      .cards,
+      .step-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .api-list {
+        columns: 1;
+      }
+
+      .nav-links {
+        width: 100%;
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-bg" aria-hidden="true"></div>
+  <header class="nav-wrap">
+    <div class="container">
+      <nav>
+        <div class="brand">Blackwire</div>
+        <div class="nav-links">
+          <a href="#highlights">Highlights</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#api">API</a>
+          <a href="#quickstart">Quick Start</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">v0.2 Release</div>
+        <h1>Device-bound trust and ratchet-ready federated messaging.</h1>
+        <p>
+          Blackwire v0.2 ships signed per-device envelopes, true multi-device accounts with revoke,
+          asymmetric device-bound JWT sessions, integrity chains, and staged ratchet/WebRTC rollout.
+        </p>
+        <div class="cta">
+          <a class="button primary" href="#quickstart">Run v0.2 Locally</a>
+          <a class="button ghost" href="README.md">Read Full Docs</a>
+        </div>
+      </div>
+      <article class="terminal reveal">
+        <div class="terminal-head">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>
+        <pre>$ docker compose -f infra/docker-compose.yml up --build
+$env:BLACKWIRE_ENABLE_RATCHET_V2B1 = "true"
+$env:BLACKWIRE_ENABLE_WEBRTC_V2B2 = "true"
+
+v2 auth: /api/v2/auth/login -> /api/v2/auth/bind-device
+v2 send: /api/v2/messages/send (sealedbox_v0_2a | ratchet_v0_2b1)
+v2 federation: /api/v2/federation/well-known
+v2 websocket: /api/v2/ws (Bearer auth)</pre>
+      </article>
+    </section>
+
+    <section id="highlights" class="section">
+      <div class="section-head">
+        <h2>v0.2 Highlights</h2>
+        <p class="section-sub">
+          v0.2a security milestones are complete, with v0.2b ratchet and WebRTC paths delivered behind rollout gates.
+        </p>
+      </div>
+      <div class="grid cards">
+        <article class="card reveal">
+          <h3>Client-Signed Envelopes</h3>
+          <p>Outbound messages are signed per device, and receivers verify signatures before accept/decrypt.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Sender Key Pinning</h3>
+          <p>TOFU pinning by <code>sender_device_uid</code> raises integrity warnings on signing-key changes.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Multi-Device + Revoke</h3>
+          <p>Accounts now support multiple active devices with immediate revoke/kick enforcement.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Device-Bound JWT Sessions</h3>
+          <p>Bootstrap-to-bind flow issues asymmetric tokens with device identity claims validated on every request.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Integrity Chain Detection</h3>
+          <p>Signed chain fields detect gaps/reordering/tampering and surface explicit integrity warnings in UI.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Ratchet + WebRTC Rollout</h3>
+          <p>Prekey/X3DH + Double Ratchet and WebRTC signaling/media are wired through v2 dual-stack contracts.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="architecture" class="section">
+      <div class="section-head">
+        <h2>v0.2 Rollout Model</h2>
+        <p class="section-sub">
+          Migration is incremental: v2 features run in parallel with v1 compatibility while ratchet and WebRTC move to default.
+        </p>
+      </div>
+      <div class="grid cards">
+        <article class="card reveal">
+          <h3>Parallel API Surface</h3>
+          <p><code>/api/v2</code> is implemented without removing <code>/api/v1</code>, allowing staged client migration.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Mode Negotiation</h3>
+          <p><code>encryption_mode</code> supports sealed-box fallback and ratchet mode with explicit policy gates.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Federation Trust Binding</h3>
+          <p>v2 federation well-known metadata binds trust to Tor onion identity while preserving signed relay controls.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Voice Transport Migration</h3>
+          <p>WebRTC signaling and media are added in v2 while legacy WS PCM can be disabled after stabilization.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="api" class="section">
+      <div class="section-head">
+        <h2>API Surface (/api/v2)</h2>
+        <p class="section-sub">
+          Selected v0.2 release endpoints. Legacy <code>/api/v1</code> remains available for compatibility.
+        </p>
+      </div>
+      <ul class="api-list reveal">
+        <li>POST /api/v2/auth/register</li>
+        <li>POST /api/v2/auth/login</li>
+        <li>POST /api/v2/auth/bind-device</li>
+        <li>POST /api/v2/auth/refresh</li>
+        <li>POST /api/v2/auth/logout</li>
+        <li>POST /api/v2/devices/register</li>
+        <li>GET /api/v2/devices</li>
+        <li>POST /api/v2/devices/{device_uid}/revoke</li>
+        <li>GET /api/v2/me</li>
+        <li>GET /api/v2/users/resolve-devices?peer_address=...</li>
+        <li>GET /api/v2/users/resolve-prekeys?peer_address=...</li>
+        <li>POST /api/v2/keys/prekeys/upload</li>
+        <li>POST /api/v2/messages/send</li>
+        <li>GET /api/v2/conversations</li>
+        <li>POST /api/v2/conversations/dm</li>
+        <li>GET /api/v2/conversations/{conversation_id}/messages</li>
+        <li>GET /api/v2/federation/well-known</li>
+        <li>GET /api/v2/federation/users/{username}/devices</li>
+        <li>GET /api/v2/federation/users/{username}/prekeys</li>
+        <li>POST /api/v2/federation/messages/relay</li>
+        <li>POST /api/v2/federation/calls/webrtc-offer</li>
+        <li>POST /api/v2/federation/calls/webrtc-answer</li>
+        <li>POST /api/v2/federation/calls/webrtc-ice</li>
+        <li>POST /api/v2/federation/group-calls/webrtc-offer</li>
+        <li>POST /api/v2/federation/group-calls/webrtc-answer</li>
+        <li>POST /api/v2/federation/group-calls/webrtc-ice</li>
+        <li>WS /api/v2/ws</li>
+      </ul>
+    </section>
+
+    <section id="quickstart" class="section">
+      <div class="section-head">
+        <h2>Quick Start</h2>
+        <p class="section-sub">
+          Enable v0.2 rollout flags, run the stack, and verify v2 federation and messaging paths.
+        </p>
+      </div>
+      <div class="grid step-grid">
+        <article class="step reveal">
+          <h3>Prepare Environment</h3>
+          <code>Copy-Item infra/example.env infra/.env</code>
+          <code>./infra/randomize-env-secrets.ps1</code>
+        </article>
+        <article class="step reveal">
+          <h3>Enable v0.2b Flags</h3>
+          <code>BLACKWIRE_ENABLE_RATCHET_V2B1=true</code>
+          <code>BLACKWIRE_ENABLE_WEBRTC_V2B2=true</code>
+        </article>
+        <article class="step reveal">
+          <h3>Set Voice Mode</h3>
+          <code>BLACKWIRE_ENABLE_LEGACY_CALL_AUDIO_WS=false</code>
+          <code>BLACKWIRE_WEBRTC_ICE_SERVERS_JSON=[{"urls":"stun:stun.l.google.com:19302"}]</code>
+        </article>
+        <article class="step reveal">
+          <h3>Start + Verify v2</h3>
+          <code>docker compose -f infra/docker-compose.yml up --build</code>
+          <code>http://localhost:8000/api/v2/federation/well-known</code>
+        </article>
+      </div>
+      <div class="status reveal">
+        v0.2a security milestones are implemented; v0.2b ratchet/WebRTC paths are available with feature gates while /api/v1 remains compatible.
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>Blackwire v0.2 release showcase site for GitHub Pages.</div>
+      <div>Updated <span id="year"></span> | See <a href="README.md">README.md</a> for full setup details.</div>
+    </div>
+  </footer>
+
+  <script>
+    const revealElements = document.querySelectorAll(".reveal");
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("visible");
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+
+    revealElements.forEach((el) => observer.observe(el));
+    document.getElementById("year").textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>
