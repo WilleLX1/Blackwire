@@ -31,22 +31,30 @@ class RateLimiter:
 
     async def enforce(self, key: str, limit: int | None = None) -> None:
         current_limit = limit or self.settings.rate_limit_per_minute
-        allowed = await self._allow(key, current_limit)
+        allowed = await self._allow(key, current_limit, units=1)
         if not allowed:
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
 
-    async def _allow(self, key: str, limit: int) -> bool:
+    async def enforce_weighted(self, key: str, units: int, limit: int) -> None:
+        effective_units = max(units, 0)
+        if effective_units == 0:
+            return
+        allowed = await self._allow(key, limit, units=effective_units)
+        if not allowed:
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+
+    async def _allow(self, key: str, limit: int, units: int) -> bool:
         current_window = int(time.time() // 60)
         if self._redis_client is not None:
             redis_key = f"rl:{key}:{current_window}"
-            raw_count = await self._redis_client.incr(redis_key)
+            raw_count = await self._redis_client.incrby(redis_key, units)
             count = cast(int, raw_count)
-            if count == 1:
+            if count == units:
                 await self._redis_client.expire(redis_key, 70)
             return count <= limit
 
         window_counts = self._memory_counts[key]
-        count = window_counts.get(current_window, 0) + 1
+        count = window_counts.get(current_window, 0) + units
         window_counts[current_window] = count
 
         stale_keys = [window for window in window_counts if window < current_window - 1]

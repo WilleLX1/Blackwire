@@ -11,7 +11,7 @@ from app.schemas.device import DeviceRegisterRequest
 from app.schemas.device import UserDeviceLookup
 from app.services.federation_client import FederationClientError, federation_client
 from app.services.peer_address import parse_peer_address_with_policy
-from app.services.server_identity import get_server_onion
+from app.services.server_authority import is_local_server_authority
 
 
 class DeviceService:
@@ -34,6 +34,7 @@ class DeviceService:
             label=payload.label,
             ik_ed25519_pub=payload.ik_ed25519_pub,
             enc_x25519_pub=payload.enc_x25519_pub,
+            status="active",
         )
         session.add(device)
         await session.flush()
@@ -45,6 +46,7 @@ class DeviceService:
             old_device = (await session.execute(old_device_stmt)).scalar_one_or_none()
             if old_device is not None:
                 old_device.revoked_at = datetime.now(UTC)
+                old_device.status = "revoked"
             current_active.device_id = device.id
             current_active.updated_at = datetime.now(UTC)
         else:
@@ -58,7 +60,11 @@ class DeviceService:
         stmt = (
             select(Device)
             .join(ActiveDevice, ActiveDevice.device_id == Device.id)
-            .where(ActiveDevice.user_id == user_id, Device.revoked_at.is_(None))
+            .where(
+                ActiveDevice.user_id == user_id,
+                Device.revoked_at.is_(None),
+                Device.status == "active",
+            )
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
@@ -78,12 +84,14 @@ class DeviceService:
         self,
         session: AsyncSession,
         peer_address: str,
+        request_authority: str | None = None,
     ) -> UserDeviceLookup | None:
         try:
             parsed = parse_peer_address_with_policy(peer_address, self.settings.tor_enabled)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        if parsed.server_onion == get_server_onion():
+        additional_aliases = {request_authority} if request_authority else None
+        if is_local_server_authority(parsed.server_onion, self.settings, additional_aliases):
             local_result = await self.get_active_device_by_username(session, parsed.username)
             if local_result is None:
                 return None

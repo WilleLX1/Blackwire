@@ -30,6 +30,11 @@ class Conversation(Base):
     peer_username: Mapped[str] = mapped_column(String(64), default="")
     peer_server_onion: Mapped[str] = mapped_column(String(255), default="")
     peer_address: Mapped[str] = mapped_column(String(320), default="", index=True)
+    conversation_type: Mapped[str] = mapped_column(String(16), default="direct", index=True)
+    group_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    group_name: Mapped[str] = mapped_column(String(128), default="")
+    origin_server_onion: Mapped[str] = mapped_column(String(255), default="")
+    owner_address: Mapped[str] = mapped_column(String(320), default="")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

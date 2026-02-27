@@ -1,6 +1,8 @@
 #include "blackwire/audio/qt_audio_call_engine.hpp"
 
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <utility>
 
 #include <QAudioSink>
@@ -254,12 +256,43 @@ void QtAudioCallEngine::FlushPlayback() {
         return;
     }
 
-    QByteArray frame;
+    QByteArray frame(kFrameBytes, '\0');
     if (playback_queue_.empty()) {
-        frame = QByteArray(kFrameBytes, '\0');
+        // Keep writing silence when no remote audio is available.
     } else {
-        frame = playback_queue_.front();
-        playback_queue_.pop_front();
+        // Mix multiple queued frames into a single 20ms buffer so group calls
+        // do not build unbounded playback delay as participant count grows.
+        const int frames_to_mix = std::min(kMaxFramesMixedPerTick, static_cast<int>(playback_queue_.size()));
+        std::array<int, kSamplesPerFrame> mixed{};
+
+        for (int i = 0; i < frames_to_mix; ++i) {
+            QByteArray chunk = playback_queue_.front();
+            playback_queue_.pop_front();
+            if (chunk.size() < kFrameBytes) {
+                chunk.append(QByteArray(kFrameBytes - chunk.size(), '\0'));
+            } else if (chunk.size() > kFrameBytes) {
+                chunk.truncate(kFrameBytes);
+            }
+
+            const auto* input = reinterpret_cast<const qint16*>(chunk.constData());
+            for (int sample = 0; sample < kSamplesPerFrame; ++sample) {
+                mixed[sample] += static_cast<int>(input[sample]);
+            }
+        }
+
+        auto* output = reinterpret_cast<qint16*>(frame.data());
+        const int divisor = std::max(1, frames_to_mix);
+        for (int sample = 0; sample < kSamplesPerFrame; ++sample) {
+            const int averaged = mixed[sample] / divisor;
+            output[sample] = static_cast<qint16>(std::clamp(
+                averaged,
+                static_cast<int>(std::numeric_limits<qint16>::min()),
+                static_cast<int>(std::numeric_limits<qint16>::max())));
+        }
+
+        while (static_cast<int>(playback_queue_.size()) > kPlaybackLatencyCapFrames) {
+            playback_queue_.pop_front();
+        }
     }
 
     const qint64 written = sink_device_->write(frame);

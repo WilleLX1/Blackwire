@@ -12,3 +12,14 @@ TEST(CryptoServiceTest, EncryptDecryptRoundTrip) {
 
     EXPECT_EQ(decrypted, plaintext);
 }
+
+TEST(CryptoServiceTest, SignVerifyRoundTrip) {
+    blackwire::SodiumCryptoService crypto;
+    const auto keys = crypto.GenerateDeviceKeys();
+
+    const std::string payload = "signed-payload";
+    const auto signature = crypto.SignDetached(keys.ik_ed25519_private_b64, payload);
+
+    EXPECT_TRUE(crypto.VerifyDetached(keys.ik_ed25519_public_b64, payload, signature));
+    EXPECT_FALSE(crypto.VerifyDetached(keys.ik_ed25519_public_b64, payload + "x", signature));
+}

@@ -34,11 +34,13 @@ async def create_dm(
     current_user: User = Depends(get_current_user),
 ) -> ConversationOut:
     await rate_limiter.enforce(client_rate_limit_key(request, f"conversation-create:{current_user.id}"))
+    request_authority = request.headers.get("host", "").strip().lower()
     conversation = await conversation_service.create_dm(
         session,
         current_user,
         payload.peer_username,
         payload.peer_address,
+        request_authority=request_authority,
     )
     peer_username = await conversation_service.peer_username_for_user(session, conversation, current_user.id)
     peer_address = await conversation_service.peer_address_for_user(session, conversation, current_user.id)

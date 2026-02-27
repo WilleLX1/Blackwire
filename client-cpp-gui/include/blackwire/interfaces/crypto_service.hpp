@@ -22,6 +22,14 @@ public:
     virtual std::string DecryptWithPrivate(
         const std::string& private_key_b64,
         const std::string& ciphertext_b64) = 0;
+    virtual std::string SignDetached(
+        const std::string& ed25519_private_key_b64,
+        const std::string& message) = 0;
+    virtual bool VerifyDetached(
+        const std::string& ed25519_public_key_b64,
+        const std::string& message,
+        const std::string& signature_b64) = 0;
+    virtual std::string Sha256(const std::string& data) = 0;
 };
 
 }  // namespace blackwire

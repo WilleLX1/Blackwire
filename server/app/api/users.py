@@ -50,7 +50,11 @@ async def resolve_user_device(
     current_user: User = Depends(get_current_user),
 ) -> UserDeviceLookup:
     await rate_limiter.enforce(client_rate_limit_key(request, f"user-device-resolve:{current_user.id}"))
-    result = await device_service.resolve_device_by_peer_address(session, peer_address)
+    result = await device_service.resolve_device_by_peer_address(
+        session,
+        peer_address,
+        request_authority=request.headers.get("host", "").strip().lower(),
+    )
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active device not found")
     return result

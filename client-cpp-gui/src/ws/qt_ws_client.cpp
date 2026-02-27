@@ -128,6 +128,7 @@ QtWsClient::QtWsClient(QObject* parent) : QObject(parent) {
 void QtWsClient::SetHandlers(
     MessageHandler on_message,
     CallIncomingHandler on_call_incoming,
+    CallGroupStateHandler on_call_group_state,
     CallRingingHandler on_call_ringing,
     CallAcceptedHandler on_call_accepted,
     CallRejectedHandler on_call_rejected,
@@ -135,10 +136,15 @@ void QtWsClient::SetHandlers(
     CallEndedHandler on_call_ended,
     CallAudioHandler on_call_audio,
     CallErrorHandler on_call_error,
+    CallWebRtcOfferHandler on_call_webrtc_offer,
+    CallWebRtcAnswerHandler on_call_webrtc_answer,
+    CallWebRtcIceHandler on_call_webrtc_ice,
+    GroupRenamedHandler on_group_renamed,
     ErrorHandler on_error,
     StatusHandler on_status) {
     on_message_ = std::move(on_message);
     on_call_incoming_ = std::move(on_call_incoming);
+    on_call_group_state_ = std::move(on_call_group_state);
     on_call_ringing_ = std::move(on_call_ringing);
     on_call_accepted_ = std::move(on_call_accepted);
     on_call_rejected_ = std::move(on_call_rejected);
@@ -146,6 +152,10 @@ void QtWsClient::SetHandlers(
     on_call_ended_ = std::move(on_call_ended);
     on_call_audio_ = std::move(on_call_audio);
     on_call_error_ = std::move(on_call_error);
+    on_call_webrtc_offer_ = std::move(on_call_webrtc_offer);
+    on_call_webrtc_answer_ = std::move(on_call_webrtc_answer);
+    on_call_webrtc_ice_ = std::move(on_call_webrtc_ice);
+    on_group_renamed_ = std::move(on_group_renamed);
     on_error_ = std::move(on_error);
     on_status_ = std::move(on_status);
 }
@@ -199,6 +209,24 @@ void QtWsClient::SendCallAudioChunk(const VoiceAudioChunk& chunk) {
     socket_.sendTextMessage(QString::fromStdString(payload.dump()));
 }
 
+void QtWsClient::SendCallWebRtcOffer(const VoiceCallWebRtcOffer& offer) {
+    nlohmann::json payload = offer;
+    payload["type"] = "call.webrtc.offer";
+    socket_.sendTextMessage(QString::fromStdString(payload.dump()));
+}
+
+void QtWsClient::SendCallWebRtcAnswer(const VoiceCallWebRtcAnswer& answer) {
+    nlohmann::json payload = answer;
+    payload["type"] = "call.webrtc.answer";
+    socket_.sendTextMessage(QString::fromStdString(payload.dump()));
+}
+
+void QtWsClient::SendCallWebRtcIce(const VoiceCallWebRtcIce& ice) {
+    nlohmann::json payload = ice;
+    payload["type"] = "call.webrtc.ice";
+    socket_.sendTextMessage(QString::fromStdString(payload.dump()));
+}
+
 void QtWsClient::ScheduleReconnect() {
     reconnect_attempt_ += 1;
     const int max_ms = 30000;
@@ -214,7 +242,7 @@ QUrl QtWsClient::BuildWsUrl() const {
     url.setScheme(scheme);
     url.setHost(base.host());
     url.setPort(base.port(base.scheme() == "https" ? 443 : 80));
-    url.setPath("/api/v1/ws");
+    url.setPath("/api/v2/ws");
     return url;
 }
 
@@ -231,6 +259,14 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
         }
 
         if (type == "call.incoming") {
+            WsEventCallIncoming event = payload.get<WsEventCallIncoming>();
+            if (on_call_incoming_) {
+                on_call_incoming_(event);
+            }
+            return;
+        }
+
+        if (type == "call.group.incoming") {
             WsEventCallIncoming event = payload.get<WsEventCallIncoming>();
             if (on_call_incoming_) {
                 on_call_incoming_(event);
@@ -278,6 +314,34 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
             return;
         }
 
+        if (type == "call.group.ended") {
+            WsEventCallEnded event = payload.get<WsEventCallEnded>();
+            if (on_call_ended_) {
+                on_call_ended_(event);
+            }
+            return;
+        }
+
+        if (type == "call.group.state") {
+            WsEventCallGroupState event = payload.get<WsEventCallGroupState>();
+            if (on_call_group_state_) {
+                on_call_group_state_(event);
+            }
+            return;
+        }
+
+        if (type == "call.group.participant") {
+            return;
+        }
+
+        if (type == "conversation.group.renamed") {
+            WsEventGroupRenamed event = payload.get<WsEventGroupRenamed>();
+            if (on_group_renamed_) {
+                on_group_renamed_(event);
+            }
+            return;
+        }
+
         if (type == "call.audio") {
             WsEventCallAudio event = payload.get<WsEventCallAudio>();
             if (on_call_audio_) {
@@ -293,6 +357,30 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
             } else if (on_error_) {
                 const std::string detail = event.detail.empty() ? "Voice call error" : event.detail;
                 on_error_(detail);
+            }
+            return;
+        }
+
+        if (type == "call.webrtc.offer") {
+            WsEventCallWebRtcOffer event = payload.get<WsEventCallWebRtcOffer>();
+            if (on_call_webrtc_offer_) {
+                on_call_webrtc_offer_(event);
+            }
+            return;
+        }
+
+        if (type == "call.webrtc.answer") {
+            WsEventCallWebRtcAnswer event = payload.get<WsEventCallWebRtcAnswer>();
+            if (on_call_webrtc_answer_) {
+                on_call_webrtc_answer_(event);
+            }
+            return;
+        }
+
+        if (type == "call.webrtc.ice") {
+            WsEventCallWebRtcIce event = payload.get<WsEventCallWebRtcIce>();
+            if (on_call_webrtc_ice_) {
+                on_call_webrtc_ice_(event);
             }
             return;
         }

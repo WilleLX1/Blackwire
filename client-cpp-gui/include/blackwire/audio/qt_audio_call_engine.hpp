@@ -51,7 +51,10 @@ private:
 
     static constexpr int kSampleRate = 16000;
     static constexpr int kFrameBytes = 640;
-    static constexpr int kPlaybackQueueLimit = 200;
+    static constexpr int kSamplesPerFrame = kFrameBytes / 2;
+    static constexpr int kPlaybackQueueLimit = 64;
+    static constexpr int kPlaybackLatencyCapFrames = 24;
+    static constexpr int kMaxFramesMixedPerTick = 8;
 
     QAudioFormat format_;
     std::unique_ptr<QAudioSource> source_;

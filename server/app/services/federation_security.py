@@ -26,6 +26,21 @@ _ONION_AUTHORITY_PATTERN = re.compile(r"^[a-z2-7]{16,56}\.onion$")
 _NONCE_PATTERN = re.compile(r"^[a-zA-Z0-9._:-]{8,128}$")
 
 
+def onion_v3_public_key_from_authority(onion_authority: str) -> bytes | None:
+    normalized = onion_authority.strip().lower()
+    if normalized.endswith(".onion"):
+        normalized = normalized[:-6]
+    if len(normalized) != 56:
+        return None
+    try:
+        decoded = base64.b32decode(normalized.upper())
+    except Exception:
+        return None
+    if len(decoded) != 35:
+        return None
+    return decoded[:32]
+
+
 def canonical_request_string(
     method: str,
     path: str,
@@ -78,6 +93,20 @@ class FederationSecurityService:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Peer well-known server identity mismatch",
             )
+        onion_pub = onion_v3_public_key_from_authority(normalized)
+        if onion_pub is not None:
+            try:
+                discovered_key = base64.b64decode(payload.signing_public_key.encode("utf-8"), validate=True)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Peer well-known signing key is invalid base64",
+                ) from exc
+            if discovered_key != onion_pub:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Peer signing key does not match onion identity",
+                )
         return payload
 
     async def get_or_onboard_peer(self, session: AsyncSession, peer_onion: str) -> FederationPeer:
@@ -97,6 +126,12 @@ class FederationSecurityService:
             return peer
 
         if peer.status == "key_conflict":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Peer key conflict")
+
+        discovered = await self.fetch_well_known(normalized)
+        if discovered.signing_public_key != peer.signing_public_key:
+            peer.status = "key_conflict"
+            await session.commit()
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Peer key conflict")
 
         peer.last_seen_at = datetime.now(UTC)

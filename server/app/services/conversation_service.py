@@ -4,8 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.conversation import Conversation
+from app.models.conversation_member import ConversationMember
 from app.models.user import User
 from app.services.peer_address import parse_peer_address, parse_peer_address_with_policy
+from app.services.server_authority import is_local_server_authority
 from app.services.server_identity import get_server_onion, server_address_for_username
 
 
@@ -44,6 +46,7 @@ class ConversationService:
 
         conversation = Conversation(
             kind="local",
+            conversation_type="direct",
             user_a_id=user_a,
             user_b_id=user_b,
             peer_server_onion=get_server_onion(),
@@ -58,13 +61,14 @@ class ConversationService:
         session: AsyncSession,
         user: User,
         peer_address: str,
+        request_authority: str | None = None,
     ) -> Conversation:
         try:
             parsed = parse_peer_address_with_policy(peer_address, self.settings.tor_enabled)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        local_onion = get_server_onion()
-        if parsed.server_onion == local_onion:
+        additional_aliases = {request_authority} if request_authority else None
+        if is_local_server_authority(parsed.server_onion, self.settings, additional_aliases):
             return await self._create_local_dm(session, user, parsed.username)
 
         existing_stmt = select(Conversation).where(
@@ -78,6 +82,7 @@ class ConversationService:
 
         conversation = Conversation(
             kind="remote",
+            conversation_type="direct",
             local_user_id=user.id,
             peer_username=parsed.username,
             peer_server_onion=parsed.server_onion,
@@ -94,9 +99,10 @@ class ConversationService:
         user: User,
         peer_username: str | None,
         peer_address: str | None,
+        request_authority: str | None = None,
     ) -> Conversation:
         if peer_address is not None and peer_address.strip():
-            return await self._create_remote_dm(session, user, peer_address)
+            return await self._create_remote_dm(session, user, peer_address, request_authority=request_authority)
         if peer_username is not None and peer_username.strip():
             return await self._create_local_dm(session, user, peer_username)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="peer target is required")
@@ -117,6 +123,15 @@ class ConversationService:
                         or_(Conversation.user_a_id == user.id, Conversation.user_b_id == user.id),
                     ),
                     and_(Conversation.kind == "remote", Conversation.local_user_id == user.id),
+                    and_(
+                        Conversation.conversation_type == "group",
+                        Conversation.id.in_(
+                            select(ConversationMember.conversation_id).where(
+                                ConversationMember.member_user_id == user.id,
+                                ConversationMember.status.in_(["active", "invited"]),
+                            )
+                        ),
+                    ),
                 )
             )
             .order_by(Conversation.created_at.desc())
@@ -133,6 +148,8 @@ class ConversationService:
     ) -> str:
         if conversation.kind == "remote":
             return conversation.peer_username or ""
+        if conversation.conversation_type == "group":
+            return conversation.group_name or ""
 
         peer_user_id = self.peer_id(conversation, user_id)
         stmt = select(User.username).where(User.id == peer_user_id)
@@ -147,6 +164,8 @@ class ConversationService:
     ) -> str:
         if conversation.kind == "remote":
             return conversation.peer_address or ""
+        if conversation.conversation_type == "group":
+            return conversation.owner_address or ""
         username = await self.peer_username_for_user(session, conversation, user_id)
         if not username:
             return ""
@@ -160,6 +179,8 @@ class ConversationService:
     ) -> str:
         if conversation.kind == "remote":
             return conversation.peer_server_onion or ""
+        if conversation.conversation_type == "group":
+            return conversation.origin_server_onion or ""
 
         peer_address = await self.peer_address_for_user(session, conversation, user_id)
         try:
@@ -168,6 +189,11 @@ class ConversationService:
             return ""
 
     def ensure_membership(self, conversation: Conversation, user_id: str) -> None:
+        if conversation.conversation_type == "group":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Group membership must be checked via group service",
+            )
         if conversation.kind == "remote":
             if conversation.local_user_id != user_id:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a conversation member")
@@ -176,6 +202,8 @@ class ConversationService:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a conversation member")
 
     def peer_id(self, conversation: Conversation, user_id: str) -> str:
+        if conversation.conversation_type == "group":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Group conversation has multiple peers")
         if conversation.kind == "remote":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Remote conversation has no local peer")
         if conversation.user_a_id == user_id:
@@ -215,6 +243,7 @@ class ConversationService:
 
         conversation = Conversation(
             kind="remote",
+            conversation_type="direct",
             local_user_id=local_user.id,
             peer_username=parsed.username,
             peer_server_onion=parsed.server_onion,

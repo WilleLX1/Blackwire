@@ -40,6 +40,11 @@ def _is_onion_authority(value: str) -> bool:
 
 
 def _build_signing_key(settings: Settings, server_onion: str) -> signing.SigningKey:
+    if settings.tor_enabled:
+        tor_key = _load_tor_hidden_service_signing_key(settings, server_onion)
+        if tor_key is not None:
+            return tor_key
+
     configured = settings.federation_signing_private_key_b64.strip()
     if configured:
         raw = base64.b64decode(configured.encode("utf-8"), validate=True)
@@ -47,13 +52,58 @@ def _build_signing_key(settings: Settings, server_onion: str) -> signing.Signing
 
     if settings.tor_enabled:
         raise RuntimeError(
-            "BLACKWIRE_FEDERATION_SIGNING_PRIVATE_KEY_B64 is required when BLACKWIRE_TOR_ENABLED=true"
+            "Tor is enabled but federation signing key could not be derived from hidden-service key"
         )
 
     seed = hashlib.sha256(
         f"{settings.jwt_secret_key}|{server_onion}|blackwire-federation-signing-seed".encode()
     ).digest()
     return signing.SigningKey(seed)
+
+
+def _onion_v3_public_key(authority: str) -> bytes | None:
+    value = authority.strip().lower()
+    if value.endswith(".onion"):
+        value = value[:-6]
+    if len(value) != 56:
+        return None
+    try:
+        decoded = base64.b32decode(value.upper())
+    except Exception:
+        return None
+    if len(decoded) != 35:
+        return None
+    return decoded[:32]
+
+
+def _load_tor_hidden_service_signing_key(settings: Settings, server_onion: str) -> signing.SigningKey | None:
+    try:
+        raw = Path(settings.tor_hs_ed25519_secret_key_file).read_bytes()
+    except OSError:
+        return None
+
+    onion_pub = _onion_v3_public_key(server_onion)
+    candidates: list[bytes] = []
+    if len(raw) >= 64:
+        candidates.append(raw[-64:-32])
+        candidates.append(raw[-32:])
+    if len(raw) >= 96:
+        candidates.append(raw[-96:-64])
+    if len(raw) >= 32:
+        candidates.append(raw[:32])
+
+    seen: set[bytes] = set()
+    for candidate in candidates:
+        if len(candidate) != 32 or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            key = signing.SigningKey(candidate)
+        except Exception:
+            continue
+        if onion_pub is None or key.verify_key.encode() == onion_pub:
+            return key
+    return None
 
 
 def _wait_for_hidden_service_hostname(path: str, wait_seconds: int) -> str | None:
