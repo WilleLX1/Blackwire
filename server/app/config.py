@@ -49,8 +49,13 @@ class Settings(BaseSettings):
     voice_call_ring_timeout_seconds: int = 30
     voice_audio_max_chunk_bytes: int = 4096
     voice_audio_min_interval_ms: int = 8
-    enable_group_dm_v2c: bool = False
-    enable_group_call_v2c: bool = False
+    enable_group_dm_v2c: bool = True
+    enable_group_call_v2c: bool = True
+    enable_typing_v03b: bool = True
+    enable_read_cursor_v03b: bool = True
+    typing_indicator_ttl_seconds: int = 6
+    typing_event_rate_per_minute: int = 240
+    read_cursor_write_rate_per_minute: int = 240
     group_max_members: int = 32
     group_call_max_participants: int = 8
     group_invite_rate_per_minute: int = 120
@@ -117,6 +122,12 @@ class Settings(BaseSettings):
             raise ValueError("group_call_start_rate_per_minute must be greater than 0")
         if self.group_call_ring_ttl_seconds <= 0:
             raise ValueError("group_call_ring_ttl_seconds must be greater than 0")
+        if self.typing_indicator_ttl_seconds <= 0:
+            raise ValueError("typing_indicator_ttl_seconds must be greater than 0")
+        if self.typing_event_rate_per_minute <= 0:
+            raise ValueError("typing_event_rate_per_minute must be greater than 0")
+        if self.read_cursor_write_rate_per_minute <= 0:
+            raise ValueError("read_cursor_write_rate_per_minute must be greater than 0")
         if self.attachment_inline_max_bytes > self.attachment_hard_ceiling_bytes:
             raise ValueError("attachment_inline_max_bytes cannot exceed attachment_hard_ceiling_bytes")
         if self.max_ciphertext_bytes > self.attachment_hard_ceiling_bytes:

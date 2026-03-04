@@ -10,6 +10,8 @@ from app.schemas.v2_federation import (
     FederationCallWebRtcAnswerRequestV2,
     FederationCallWebRtcIceRequestV2,
     FederationCallWebRtcOfferRequestV2,
+    FederationConversationReadRelayRequestV2,
+    FederationConversationTypingRelayRequestV2,
     FederationGroupCallEndRequestV2,
     FederationGroupCallJoinRequestV2,
     FederationGroupCallLeaveRequestV2,
@@ -32,12 +34,14 @@ from app.services.group_conversation_service import group_conversation_service
 from app.services.message_service_v2 import message_service_v2
 from app.services.metrics import metrics
 from app.services.prekey_service_v2 import prekey_service_v2
+from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.rate_limit import rate_limiter
 from app.services.server_identity import (
     get_federation_signing_public_key_b64,
     get_server_onion,
     server_address_for_username,
 )
+from app.services.typing_service_v2 import typing_service_v2
 
 router = APIRouter(prefix="/api/v2/federation", tags=["federation-v2"])
 
@@ -209,6 +213,28 @@ async def group_invite_accept(
         group_uid=payload.group_uid,
         actor_address=payload.actor_address,
     )
+    return {"status": "ok"}
+
+
+@router.post("/conversations/typing")
+async def relay_conversation_typing(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationConversationTypingRelayRequestV2.model_validate_json(raw_body)
+    await typing_service_v2.relay_typing_from_federation(session, payload)
+    return {"status": "ok"}
+
+
+@router.post("/conversations/read")
+async def relay_conversation_read(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    raw_body = await _verify_federation_write_auth(request, session)
+    payload = FederationConversationReadRelayRequestV2.model_validate_json(raw_body)
+    await read_state_service_v2.relay_read_from_federation(session, payload)
     return {"status": "ok"}
 
 

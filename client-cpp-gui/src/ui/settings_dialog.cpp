@@ -142,6 +142,10 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
         emit AcceptMessagesFromStrangersChanged(enabled);
     });
 
+    QObject::connect(save_message_cache_checkbox_, &QCheckBox::toggled, this, [this](bool enabled) {
+        emit SaveMessageCacheChanged(enabled);
+    });
+
     QObject::connect(this, &QDialog::finished, this, [this](int) { StopAudioMonitor(); });
 }
 
@@ -222,18 +226,24 @@ void SettingsDialog::BuildMyAccountPage() {
     server_url_value_ = new QLabel("-", page);
     device_label_value_ = new QLabel("-", page);
     device_id_value_ = new QLabel("-", page);
+    client_version_value_ = new QLabel("-", page);
+    server_version_value_ = new QLabel("-", page);
     connection_status_value_ = new QLabel("-", page);
 
     identity_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     server_url_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     device_label_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     device_id_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    client_version_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    server_version_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     connection_status_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
     form->addRow("Your ID", identity_value_);
     form->addRow("Home Server URL", server_url_value_);
     form->addRow("Device Label", device_label_value_);
     form->addRow("Device ID", device_id_value_);
+    form->addRow("Client Version", client_version_value_);
+    form->addRow("Server Version", server_version_value_);
     form->addRow("Connection", connection_status_value_);
     layout->addLayout(form);
 
@@ -350,6 +360,27 @@ void SettingsDialog::BuildPrivacyPage() {
     title->setObjectName("threadTitle");
     layout->addWidget(title);
 
+    auto* cache_section_title = new QLabel("Message Storage", page);
+    cache_section_title->setObjectName("conversationSubtitle");
+    layout->addWidget(cache_section_title);
+
+    auto* cache_text =
+        new QLabel("When enabled, messages are saved to an encrypted local cache so they persist across restarts. "
+                    "When disabled, message history is cleared when the client exits.",
+                    page);
+    cache_text->setObjectName("conversationSubtitle");
+    cache_text->setWordWrap(true);
+    layout->addWidget(cache_text);
+
+    save_message_cache_checkbox_ = new QCheckBox("Save messages to encrypted cache", page);
+    save_message_cache_checkbox_->setChecked(false);
+    layout->addWidget(save_message_cache_checkbox_, 0, Qt::AlignLeft);
+
+    auto* separator = new QWidget(page);
+    separator->setFixedHeight(1);
+    separator->setStyleSheet("background-color: #3f4147;");
+    layout->addWidget(separator);
+
     auto* text =
         new QLabel("Diagnostics includes local state, connection status, and recent events for troubleshooting.", page);
     text->setObjectName("conversationSubtitle");
@@ -439,6 +470,15 @@ void SettingsDialog::SetDeviceInfo(const QString& label, const QString& device_i
     device_label_value_->setText(label.isEmpty() ? "-" : label);
     device_id_value_->setText(device_id_.isEmpty() ? "-" : device_id_);
     copy_device_button_->setEnabled(!device_id_.isEmpty());
+}
+
+void SettingsDialog::SetVersionInfo(const QString& client_version, const QString& server_version) {
+    if (client_version_value_ != nullptr) {
+        client_version_value_->setText(client_version.trimmed().isEmpty() ? "-" : client_version.trimmed());
+    }
+    if (server_version_value_ != nullptr) {
+        server_version_value_->setText(server_version.trimmed().isEmpty() ? "-" : server_version.trimmed());
+    }
 }
 
 void SettingsDialog::SetConnectionStatus(const QString& status) {
@@ -551,6 +591,21 @@ bool SettingsDialog::AcceptMessagesFromStrangers() const {
         return true;
     }
     return accept_messages_checkbox_->isChecked();
+}
+
+void SettingsDialog::SetSaveMessageCache(bool enabled) {
+    if (save_message_cache_checkbox_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(save_message_cache_checkbox_);
+    save_message_cache_checkbox_->setChecked(enabled);
+}
+
+bool SettingsDialog::SaveMessageCache() const {
+    if (save_message_cache_checkbox_ == nullptr) {
+        return false;
+    }
+    return save_message_cache_checkbox_->isChecked();
 }
 
 void SettingsDialog::RefreshAudioMonitor() {

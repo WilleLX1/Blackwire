@@ -38,6 +38,7 @@ public:
     void SetIdentity(const QString& user_address);
     void SetCallState(const CallStateView& state);
     void SetUserStatus(const QString& status);
+    void SetTypingIndicator(const QString& conversation_id, const QString& text);
     void ShowBanner(const QString& text, const QString& severity);
     void ClearCompose();
     void SetSendEnabled(bool enabled);
@@ -53,6 +54,8 @@ signals:
         const QString& title);
     void SendMessageRequested();
     void SendFileRequested(const QString& file_path);
+    void RetryAttachmentRequested(const QString& message_id);
+    void TypingStateChanged(const QString& conversation_id, bool typing);
     void SettingsRequested();
     void StartVoiceCallRequested();
     void AcceptVoiceCallRequested();
@@ -68,7 +71,7 @@ signals:
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
     QWidget* CreateConversationItemWidget(const ConversationListItemView& item, bool selected, bool removable);
-    QWidget* CreateThreadMessageWidget(const ThreadMessageView& message) const;
+    QWidget* CreateThreadMessageWidget(const ThreadMessageView& message);
     bool IsTimelineNearBottom() const;
     void ScrollTimelineToBottom();
     void SetTimelineHasMessages(bool has_messages);
@@ -117,12 +120,16 @@ private:
     QLabel* identity_label_;
     QPushButton* copy_identity_button_;
     QLabel* banner_label_;
+    QLabel* typing_indicator_label_;
     QLineEdit* thread_title_label_;
     QLabel* empty_state_label_;
     QTimer* banner_timer_;
+    QTimer* typing_idle_timer_;
     QString identity_value_;
     CallStateView call_state_;
     bool contacts_mode_active_ = true;
+    bool local_typing_active_ = false;
+    QString local_typing_conversation_id_;
 };
 
 }  // namespace blackwire

@@ -17,9 +17,15 @@ struct LocalMessage {
     std::string sender_user_id;
     std::string sender_address;
     std::string created_at;
+    long long sent_at_ms = 0;
     std::string rendered_text;
     std::string plaintext;
     std::string plaintext_cache_b64;
+    std::string attachment_name;
+    std::string attachment_mime_type;
+    std::string attachment_media_kind;
+    std::string attachment_status = "success";
+    std::string retry_payload;
 };
 
 struct ConversationMeta {
@@ -36,6 +42,7 @@ struct AudioPreferences {
 
 struct SocialPreferences {
     bool accept_messages_from_strangers = true;
+    bool save_message_cache = true;
     std::string presence_status = "active";
 };
 
@@ -69,9 +76,19 @@ inline void to_json(nlohmann::json& j, const LocalMessage& v) {
                        {"sender_address", v.sender_address.empty() ? nlohmann::json(nullptr)
                                                                    : nlohmann::json(v.sender_address)},
                        {"created_at", v.created_at},
+                       {"sent_at_ms", v.sent_at_ms},
                        {"rendered_text", v.rendered_text},
                        {"plaintext_cache_b64", v.plaintext_cache_b64.empty() ? nlohmann::json(nullptr)
-                                                                             : nlohmann::json(v.plaintext_cache_b64)}};
+                                                                             : nlohmann::json(v.plaintext_cache_b64)},
+                       {"attachment_name", v.attachment_name.empty() ? nlohmann::json(nullptr)
+                                                                      : nlohmann::json(v.attachment_name)},
+                       {"attachment_mime_type", v.attachment_mime_type.empty() ? nlohmann::json(nullptr)
+                                                                                : nlohmann::json(v.attachment_mime_type)},
+                       {"attachment_media_kind", v.attachment_media_kind.empty() ? nlohmann::json(nullptr)
+                                                                                  : nlohmann::json(v.attachment_media_kind)},
+                       {"attachment_status", v.attachment_status},
+                       {"retry_payload", v.retry_payload.empty() ? nlohmann::json(nullptr)
+                                                                 : nlohmann::json(v.retry_payload)}};
 }
 
 inline void to_json(nlohmann::json& j, const ConversationMeta& v) {
@@ -84,20 +101,22 @@ inline void to_json(nlohmann::json& j, const ConversationMeta& v) {
 }
 
 inline void from_json(const nlohmann::json& j, LocalMessage& v) {
-    j.at("id").get_to(v.id);
-    j.at("conversation_id").get_to(v.conversation_id);
-    j.at("sender_user_id").get_to(v.sender_user_id);
-    v.sender_address = j.value("sender_address", "");
-    j.at("created_at").get_to(v.created_at);
+    v.id = j.value("id", "");
+    v.conversation_id = j.value("conversation_id", "");
+    v.sender_user_id = j.value("sender_user_id", "");
+    v.sender_address = JsonStringOrDefault(j, "sender_address");
+    v.created_at = j.value("created_at", "");
+    v.sent_at_ms = j.value("sent_at_ms", 0LL);
     // Scrub any historical plaintext payload that may have been persisted.
     v.rendered_text = "[encrypted message]";
     // Never deserialize historical plaintext from disk into runtime state.
     v.plaintext.clear();
-    if (j.contains("plaintext_cache_b64") && !j.at("plaintext_cache_b64").is_null()) {
-        v.plaintext_cache_b64 = j.value("plaintext_cache_b64", "");
-    } else {
-        v.plaintext_cache_b64.clear();
-    }
+    v.plaintext_cache_b64 = JsonStringOrDefault(j, "plaintext_cache_b64");
+    v.attachment_name = JsonStringOrDefault(j, "attachment_name");
+    v.attachment_mime_type = JsonStringOrDefault(j, "attachment_mime_type");
+    v.attachment_media_kind = JsonStringOrDefault(j, "attachment_media_kind");
+    v.attachment_status = JsonStringOrDefault(j, "attachment_status", "success");
+    v.retry_payload = JsonStringOrDefault(j, "retry_payload");
 }
 
 inline void from_json(const nlohmann::json& j, ConversationMeta& v) {
@@ -127,12 +146,14 @@ inline void from_json(const nlohmann::json& j, AudioPreferences& v) {
 inline void to_json(nlohmann::json& j, const SocialPreferences& v) {
     j = nlohmann::json{
         {"accept_messages_from_strangers", v.accept_messages_from_strangers},
+        {"save_message_cache", v.save_message_cache},
         {"presence_status", v.presence_status},
     };
 }
 
 inline void from_json(const nlohmann::json& j, SocialPreferences& v) {
     v.accept_messages_from_strangers = j.value("accept_messages_from_strangers", true);
+    v.save_message_cache = j.value("save_message_cache", true);
     v.presence_status = j.value("presence_status", "active");
 }
 

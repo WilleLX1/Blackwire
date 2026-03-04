@@ -4,9 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.utils import client_rate_limit_key
 from app.dependencies import AuthenticatedDeviceContextV2, db_session, get_current_device_context_v2
 from app.schemas.v2_conversation import (
+    ConversationReadCursorOutV2,
+    ConversationReadRequestV2,
+    ConversationReadStateOutV2,
     ConversationMemberOutV2,
     ConversationOutV2,
     ConversationRecipientsOutV2,
+    ConversationTypingRequestV2,
+    ConversationTypingResponseV2,
     CreateDMConversationRequestV2,
     CreateGroupConversationRequestV2,
     GroupInviteRequestV2,
@@ -17,7 +22,9 @@ from app.schemas.v2_message import MessageDeviceCopyOutV2, MessageEventOutV2
 from app.services.conversation_service import conversation_service
 from app.services.group_conversation_service import group_conversation_service
 from app.services.message_service_v2 import message_service_v2
+from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.rate_limit import rate_limiter
+from app.services.typing_service_v2 import typing_service_v2
 
 router = APIRouter(prefix="/api/v2/conversations", tags=["conversations-v2"])
 
@@ -120,6 +127,72 @@ async def list_members(
         raise HTTPException(status_code=404, detail="Conversation not found")
     members = await group_conversation_service.list_members(session, conversation, context.user.id)
     return [group_conversation_service.member_out(row) for row in members]
+
+
+@router.post("/{conversation_id}/typing", response_model=ConversationTypingResponseV2)
+async def publish_typing(
+    conversation_id: str,
+    payload: ConversationTypingRequestV2,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+    context: AuthenticatedDeviceContextV2 = Depends(get_current_device_context_v2),
+) -> ConversationTypingResponseV2:
+    await rate_limiter.enforce(
+        client_rate_limit_key(request, f"v2-typing:{context.user.id}"),
+        limit=typing_service_v2.settings.typing_event_rate_per_minute,
+    )
+    conversation = await conversation_service.get_by_id(session, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    expires_in_ms = await typing_service_v2.publish_local_typing(
+        session,
+        conversation=conversation,
+        sender_user=context.user,
+        state=payload.state,
+    )
+    return ConversationTypingResponseV2(ok=True, expires_in_ms=expires_in_ms)
+
+
+@router.post("/{conversation_id}/read", response_model=ConversationReadCursorOutV2)
+async def publish_read(
+    conversation_id: str,
+    payload: ConversationReadRequestV2,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+    context: AuthenticatedDeviceContextV2 = Depends(get_current_device_context_v2),
+) -> ConversationReadCursorOutV2:
+    await rate_limiter.enforce(
+        client_rate_limit_key(request, f"v2-read-cursor:{context.user.id}"),
+        limit=read_state_service_v2.settings.read_cursor_write_rate_per_minute,
+    )
+    conversation = await conversation_service.get_by_id(session, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return await read_state_service_v2.publish_local_read_cursor(
+        session,
+        conversation=conversation,
+        reader_user=context.user,
+        last_read_message_id=payload.last_read_message_id,
+        last_read_sent_at_ms=payload.last_read_sent_at_ms,
+    )
+
+
+@router.get("/{conversation_id}/read", response_model=ConversationReadStateOutV2)
+async def get_read(
+    conversation_id: str,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+    context: AuthenticatedDeviceContextV2 = Depends(get_current_device_context_v2),
+) -> ConversationReadStateOutV2:
+    await rate_limiter.enforce(client_rate_limit_key(request, f"v2-read-cursor-get:{context.user.id}"))
+    conversation = await conversation_service.get_by_id(session, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return await read_state_service_v2.get_read_state(
+        session,
+        conversation=conversation,
+        reader_user=context.user,
+    )
 
 
 @router.post("/{conversation_id}/members/invite", response_model=list[ConversationMemberOutV2])

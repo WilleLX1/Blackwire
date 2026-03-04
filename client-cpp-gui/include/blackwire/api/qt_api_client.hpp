@@ -125,6 +125,27 @@ public:
         const std::string& access_token,
         const std::string& conversation_id) override;
 
+    ConversationTypingResponse SendConversationTyping(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id,
+        const ConversationTypingRequest& request) override;
+
+    ConversationReadCursorOut SendConversationRead(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id,
+        const ConversationReadRequest& request) override;
+
+    ConversationReadStateOut GetConversationReadState(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) override;
+
+    SystemVersionOut GetSystemVersion(
+        const std::string& base_url,
+        const std::string& access_token) override;
+
     std::vector<MessageOut> ListMessages(
         const std::string& base_url,
         const std::string& access_token,

@@ -23,6 +23,8 @@ public:
     using CallWebRtcAnswerHandler = std::function<void(const WsEventCallWebRtcAnswer&)>;
     using CallWebRtcIceHandler = std::function<void(const WsEventCallWebRtcIce&)>;
     using GroupRenamedHandler = std::function<void(const WsEventGroupRenamed&)>;
+    using ConversationTypingHandler = std::function<void(const WsEventConversationTyping&)>;
+    using ConversationReadHandler = std::function<void(const WsEventConversationRead&)>;
     using ErrorHandler = std::function<void(const std::string&)>;
     using StatusHandler = std::function<void(bool)>;
 
@@ -43,6 +45,8 @@ public:
         CallWebRtcAnswerHandler on_call_webrtc_answer,
         CallWebRtcIceHandler on_call_webrtc_ice,
         GroupRenamedHandler on_group_renamed,
+        ConversationTypingHandler on_conversation_typing,
+        ConversationReadHandler on_conversation_read,
         ErrorHandler on_error,
         StatusHandler on_status) = 0;
     virtual void Connect(const std::string& base_url, const std::string& access_token) = 0;

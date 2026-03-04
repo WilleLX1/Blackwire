@@ -159,6 +159,8 @@ int SmokeRunner::Run(const QString& base_url) {
             [&](const WsEventCallWebRtcAnswer&) {},
             [&](const WsEventCallWebRtcIce&) {},
             [&](const WsEventGroupRenamed&) {},
+            [&](const WsEventConversationTyping&) {},
+            [&](const WsEventConversationRead&) {},
             [&](const std::string& error) {
                 std::cerr << "WS error: " << error << '\n';
             },

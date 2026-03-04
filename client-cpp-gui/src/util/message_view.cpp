@@ -8,6 +8,8 @@ namespace blackwire {
 
 namespace {
 
+const char* kFileMessagePrefix = "bwfile://v1:";
+
 QDateTime ParseMessageTime(const std::string& value) {
     const QString iso = QString::fromStdString(value);
     QDateTime parsed = QDateTime::fromString(iso, Qt::ISODateWithMs);
@@ -95,8 +97,11 @@ std::vector<ThreadMessageView> BuildThreadMessageViews(
         view.id = QString::fromStdString(item->id);
         view.created_at_iso = QString::fromStdString(item->created_at);
         view.created_at_display = FormatThreadTimestamp(view.created_at_iso);
-        view.outgoing = item->sender_user_id == self_user_id;
-        if (view.outgoing) {
+        view.system = item->sender_user_id.empty() && item->sender_address.empty();
+        view.outgoing = !view.system && item->sender_user_id == self_user_id;
+        if (view.system) {
+            view.sender_label.clear();
+        } else if (view.outgoing) {
             view.sender_label = "You";
         } else {
             const QString from_address = LabelFromSenderAddress(item->sender_address);
@@ -107,8 +112,23 @@ std::vector<ThreadMessageView> BuildThreadMessageViews(
 
         const QString plaintext = QString::fromStdString(item->plaintext);
         view.body = plaintext.isEmpty() ? ExtractLegacyPlaintext(QString::fromStdString(item->rendered_text)) : plaintext;
-        view.grouped_with_previous =
-            !views.empty() && views.back().outgoing == view.outgoing && views.back().sender_label == view.sender_label;
+        view.sent_at_ms = item->sent_at_ms;
+        view.attachment_name = QString::fromStdString(item->attachment_name);
+        view.attachment_mime_type = QString::fromStdString(item->attachment_mime_type);
+        view.attachment_media_kind = QString::fromStdString(item->attachment_media_kind);
+        view.attachment_status = QString::fromStdString(item->attachment_status.empty() ? "success" : item->attachment_status);
+        view.attachment_retryable = !item->retry_payload.empty();
+        if (view.system) {
+            view.render_mode = "system";
+            view.grouped_with_previous = false;
+        } else {
+            view.render_mode = view.body.startsWith(kFileMessagePrefix, Qt::CaseInsensitive) ? "attachment" : "markdown";
+            view.grouped_with_previous =
+                !views.empty() &&
+                !views.back().system &&
+                views.back().outgoing == view.outgoing &&
+                views.back().sender_label == view.sender_label;
+        }
         views.push_back(view);
     }
 

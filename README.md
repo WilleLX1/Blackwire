@@ -1,6 +1,6 @@
 # Blackwire
 
-Blackwire v0.1 is a security-first encrypted messaging platform with Tor-native federation.
+Blackwire v0.3 (Wave 1) is a security-first encrypted messaging platform with Tor-native federation.
 
 ## What is implemented
 
@@ -9,7 +9,7 @@ Blackwire v0.1 is a security-first encrypted messaging platform with Tor-native 
 - Ciphertext-only message storage and forwarding.
 - Password auth with JWT access tokens and rotating refresh tokens.
 - Single active device model per account.
-- Direct 1:1 conversations.
+- Direct 1:1 conversations and group conversations.
 - Local + federated (`username@onion`) DM routing.
 - Home-server-only client routing (client talks only to its configured home server URL).
 - Canonical user identity returned by server as `user_address` (`username@onion`).
@@ -17,7 +17,21 @@ Blackwire v0.1 is a security-first encrypted messaging platform with Tor-native 
 - 7-day TTL expiry for undelivered queue entries.
 - Signed server-to-server federation requests with TOFU key pinning.
 - Federated message relay with durable outbox retry.
-- Federated voice call signaling and audio relay.
+- Federated voice call signaling (direct and group call flows).
+- Typing indicator contracts/events (`/api/v2`) with federation relay.
+- Conversation read cursor contracts/events (`/api/v2`) with federation relay.
+- Server version endpoint (`GET /api/v2/system/version`).
+- Qt client markdown message rendering with raw HTML disabled.
+- Qt client inline image rendering and click-to-play inline video dialog.
+- Qt client attachment lifecycle UX (`queued`, `sending`, `success`, `failed`, retry).
+- Qt client settings display of client/server version in `Settings -> My Account`.
+- Qt client encrypted message cache with user privacy control toggle (`Settings → Data & Privacy`).
+- Qt client external link click confirmation dialog for markdown links.
+- Qt client Discord-style dark theme with flat design and inline avatars.
+- Qt client friends list filtering (excludes group DMs from contacts sidebar).
+- Qt client call message cache formatting (CALL icon/styling persists after conversation switches).
+- Qt client call target stability (peer name from actual call target, not selected conversation).
+- JSON deserialization hardening for state persistence (null-safe field loading).
 - Optional Redis-backed rate-limiter mode (core works without Redis).
 - Python reference client (`tools/reference_client`) with libsodium sealed-box encrypt/decrypt flow.
 - Unit + integration tests under `server/tests`.
@@ -174,37 +188,33 @@ Run client smoke E2E (requires running server):
 
 ## API surface
 
-Implemented API prefix: `/api/v1`
+Primary API prefix: `/api/v2`  
+Legacy compatibility API prefix: `/api/v1` (still supported in this wave)
 
-- `POST /auth/register`
-- `POST /auth/login`
-- `POST /auth/refresh`
-- `POST /auth/logout`
-- `GET /me`
-- `POST /devices/register`
-- `GET /users/{username}/device`
-- `GET /users/resolve-device?peer_address=...`
-- `POST /conversations/dm`
-- `GET /conversations`
-- `GET /conversations/{conversation_id}/messages`
-- `POST /messages/send`
-- `GET /federation/well-known`
-- `GET /federation/users/{username}/device`
-- `POST /federation/messages/relay`
-- `POST /federation/calls/offer`
-- `POST /federation/calls/accept`
-- `POST /federation/calls/reject`
-- `POST /federation/calls/end`
-- `POST /federation/calls/audio`
-- `GET /health/live`
-- `GET /health/ready`
-- `GET /api/v1/metrics`
-- `GET /api/v1/ws` (requires `Authorization: Bearer <access_token>` during websocket handshake)
+Key `/api/v2` routes include:
 
-## Current v0.1 constraints
+- Auth and device lifecycle (`/auth/*`, `/devices/*`, `/users/*`, `/keys/*`)
+- Presence (`POST /presence/set`, `POST /presence/resolve`)
+- Conversations (`/conversations/dm`, `/conversations/group`, `/conversations/{id}/members/*`, `/conversations/{id}/messages`)
+- Typing/read state:
+  - `POST /conversations/{conversation_id}/typing`
+  - `POST /conversations/{conversation_id}/read`
+  - `GET /conversations/{conversation_id}/read`
+- Messaging (`POST /messages/send`)
+- Federation (`/federation/*`) including:
+  - `POST /federation/conversations/typing`
+  - `POST /federation/conversations/read`
+- System:
+  - `GET /system/version`
+- WebSocket:
+  - `GET /api/v2/ws` (requires bearer auth during websocket handshake)
+
+Legacy `/api/v1` routes remain available for compatibility (see `spec/api.md`).
+
+## Current constraints
 
 - One active device per user.
-- Sealed-box message encryption (no Noise session ratchet in v0.1).
+- Sealed-box message encryption baseline remains; ratchet scaffolding exists but full protocol migration is phased.
 
 ## License
 

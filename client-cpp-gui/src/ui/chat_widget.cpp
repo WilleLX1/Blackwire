@@ -6,6 +6,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDialog>
+#include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
@@ -19,17 +20,25 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMediaPlayer>
+#include <QAudioOutput>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTemporaryFile>
+#include <QVideoWidget>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSize>
+#include <QSizePolicy>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStyle>
 #include <Qt>
 #include <QTimer>
+#include <QDesktopServices>
+#include <QMessageBox>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -62,15 +71,15 @@ QString NormalizePresenceStatus(const QString& value) {
 QString PresenceColorForStatus(const QString& value) {
     const QString normalized = NormalizePresenceStatus(value);
     if (normalized == "active") {
-        return "#2d7d46";  // green
+        return "#23a55a";  // Discord green
     }
     if (normalized == "inactive") {
-        return "#d4a63c";  // yellow
+        return "#f0b232";  // Discord yellow/idle
     }
     if (normalized == "dnd") {
-        return "#9e2c31";  // red
+        return "#f23f43";  // Discord red
     }
-    return "#6a6f78";  // offline/default gray
+    return "#80848e";  // Discord offline gray
 }
 
 QString HumanFileSize(qint64 size_bytes) {
@@ -87,7 +96,9 @@ bool DecodeFileMessageBody(
     const QString& body,
     QString* file_name,
     QByteArray* file_bytes,
-    qint64* file_size_bytes) {
+    qint64* file_size_bytes,
+    QString* mime_type,
+    QString* media_kind) {
     if (!body.startsWith(kFileMessagePrefix, Qt::CaseInsensitive)) {
         return false;
     }
@@ -125,7 +136,31 @@ bool DecodeFileMessageBody(
     if (file_size_bytes != nullptr) {
         *file_size_bytes = static_cast<qint64>(obj.value("size").toDouble(static_cast<double>(bytes.size())));
     }
+    if (mime_type != nullptr) {
+        *mime_type = obj.value("mime_type").toString().trimmed().toLower();
+    }
+    if (media_kind != nullptr) {
+        QString kind = obj.value("media_kind").toString().trimmed().toLower();
+        if (kind.isEmpty()) {
+            const QString resolved_mime = obj.value("mime_type").toString().trimmed().toLower();
+            if (resolved_mime.startsWith("image/")) {
+                kind = "image";
+            } else if (resolved_mime.startsWith("video/")) {
+                kind = "video";
+            } else {
+                kind = "file";
+            }
+        }
+        *media_kind = kind;
+    }
     return true;
+}
+
+QString SanitizeMarkdownSource(QString source) {
+    source.replace("&", "&amp;");
+    source.replace("<", "&lt;");
+    source.replace(">", "&gt;");
+    return source;
 }
 
 QString FormatCallStatusText(const CallStateView& state) {
@@ -221,33 +256,49 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
 
     auto* sidebar = new QWidget(split);
     sidebar->setObjectName("dmSidebar");
-    sidebar->setMinimumWidth(290);
-    sidebar->setMaximumWidth(360);
+    sidebar->setMinimumWidth(240);
+    sidebar->setMaximumWidth(320);
     auto* sidebar_layout = new QVBoxLayout(sidebar);
-    sidebar_layout->setContentsMargins(14, 14, 14, 14);
-    sidebar_layout->setSpacing(10);
+    sidebar_layout->setContentsMargins(0, 12, 0, 0);
+    sidebar_layout->setSpacing(6);
 
-    auto* sidebar_title = new QLabel("Messages", sidebar);
+    auto* sidebar_title = new QLabel("DIRECT MESSAGES", sidebar);
     sidebar_title->setObjectName("dmSidebarTitle");
     sidebar_layout->addWidget(sidebar_title);
 
     auto* contacts_toggle_card = new QWidget(sidebar);
     contacts_toggle_card->setObjectName("contactsToggleCard");
     auto* contacts_toggle_layout = new QHBoxLayout(contacts_toggle_card);
-    contacts_toggle_layout->setContentsMargins(10, 8, 10, 8);
+    contacts_toggle_layout->setContentsMargins(8, 4, 8, 8);
     contacts_toggle_layout->setSpacing(0);
-    contacts_button_ = new QPushButton("Contacts", contacts_toggle_card);
+    contacts_button_ = new QPushButton("Friends", contacts_toggle_card);
     contacts_button_->setObjectName("secondaryButton");
     contacts_button_->setCheckable(true);
+    contacts_button_->setStyleSheet(
+        "QPushButton { background: transparent; border: none; color: #949ba4;"
+        " font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 4px;"
+        " text-align: left; }"
+        "QPushButton:hover { background: #35373c; color: #dbdee1; }"
+        "QPushButton:checked { background: #404249; color: #ffffff; }");
     contacts_toggle_layout->addWidget(contacts_button_);
     sidebar_layout->addWidget(contacts_toggle_card);
 
     auto* peer_row = new QHBoxLayout();
-    peer_row->setSpacing(8);
+    peer_row->setContentsMargins(8, 0, 8, 0);
+    peer_row->setSpacing(6);
     peer_input_ = new QLineEdit(sidebar);
-    peer_input_->setPlaceholderText("peer username or username@onion");
-    new_chat_button_ = new QPushButton("Open DM", sidebar);
+    peer_input_->setPlaceholderText("Find or start a conversation");
+    peer_input_->setStyleSheet(
+        "QLineEdit { background: #1e1f22; border-radius: 4px; padding: 6px 8px;"
+        " font-size: 13px; color: #949ba4; }");
+    new_chat_button_ = new QPushButton("+", sidebar);
     new_chat_button_->setObjectName("secondaryButton");
+    new_chat_button_->setFixedSize(28, 28);
+    new_chat_button_->setStyleSheet(
+        "QPushButton { background: transparent; border: none; color: #b5bac1;"
+        " font-size: 18px; font-weight: 700; border-radius: 4px; padding: 0; }"
+        "QPushButton:hover { color: #dbdee1; background: #35373c; }");
+    new_chat_button_->setToolTip("Open DM");
     peer_row->addWidget(peer_input_, 1);
     peer_row->addWidget(new_chat_button_);
     sidebar_layout->addLayout(peer_row);
@@ -262,41 +313,75 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
 
     auto* identity_card = new QWidget(sidebar);
     identity_card->setObjectName("identityCard");
-    auto* identity_layout = new QVBoxLayout(identity_card);
-    identity_layout->setContentsMargins(10, 10, 10, 10);
-    identity_layout->setSpacing(6);
+    auto* identity_layout = new QHBoxLayout(identity_card);
+    identity_layout->setContentsMargins(8, 6, 8, 6);
+    identity_layout->setSpacing(8);
 
+    auto* identity_avatar = new QLabel("U", identity_card);
+    identity_avatar->setFixedSize(32, 32);
+    identity_avatar->setAlignment(Qt::AlignCenter);
+    identity_avatar->setStyleSheet(
+        "background: #5865f2; border-radius: 16px; color: #ffffff;"
+        " font-size: 13px; font-weight: 600;");
+    identity_layout->addWidget(identity_avatar);
+
+    auto* identity_text_col = new QVBoxLayout();
+    identity_text_col->setSpacing(0);
     identity_label_ = new QLabel("Your ID: -", identity_card);
     identity_label_->setObjectName("identityLabel");
     identity_label_->setWordWrap(true);
-    identity_layout->addWidget(identity_label_);
+    identity_text_col->addWidget(identity_label_);
+    identity_layout->addLayout(identity_text_col, 1);
 
-    auto* identity_actions = new QHBoxLayout();
-    identity_actions->setSpacing(8);
-    copy_identity_button_ = new QPushButton("Copy ID", identity_card);
+    copy_identity_button_ = new QPushButton("Copy", identity_card);
     copy_identity_button_->setObjectName("secondaryButton");
     copy_identity_button_->setEnabled(false);
+    copy_identity_button_->setFixedHeight(24);
+    copy_identity_button_->setStyleSheet(
+        "QPushButton { background: transparent; border: none; color: #949ba4;"
+        " font-size: 12px; padding: 2px 6px; border-radius: 3px; }"
+        "QPushButton:hover { background: #35373c; color: #dbdee1; }");
     settings_button_ = new QPushButton("Settings", identity_card);
     settings_button_->setObjectName("secondaryButton");
-    identity_actions->addWidget(copy_identity_button_);
-    identity_actions->addWidget(settings_button_);
-    identity_layout->addLayout(identity_actions);
+    settings_button_->setFixedHeight(24);
+    settings_button_->setStyleSheet(
+        "QPushButton { background: transparent; border: none; color: #949ba4;"
+        " font-size: 12px; padding: 2px 6px; border-radius: 3px; }"
+        "QPushButton:hover { background: #35373c; color: #dbdee1; }");
+    identity_layout->addWidget(copy_identity_button_);
+    identity_layout->addWidget(settings_button_);
     sidebar_layout->addWidget(identity_card);
 
     auto* content = new QWidget(split);
     content->setObjectName("chatPane");
     auto* content_layout = new QVBoxLayout(content);
-    content_layout->setContentsMargins(16, 16, 16, 16);
-    content_layout->setSpacing(10);
+    content_layout->setContentsMargins(0, 0, 0, 0);
+    content_layout->setSpacing(0);
 
-    auto* header_row = new QHBoxLayout();
+    /* ── Discord-style header bar ─────────────────────────── */
+    auto* header_bar = new QWidget(content);
+    header_bar->setObjectName("chatHeaderBar");
+    header_bar->setFixedHeight(48);
+    auto* header_row = new QHBoxLayout(header_bar);
+    header_row->setContentsMargins(16, 0, 16, 0);
     header_row->setSpacing(8);
+
+    auto* channel_hash = new QLabel("@", content);
+    channel_hash->setStyleSheet("color: #949ba4; font-size: 20px; font-weight: 600; background: transparent;");
+    channel_hash->setFixedWidth(20);
+
     thread_title_label_ = new QLineEdit("Select a conversation", content);
     thread_title_label_->setObjectName("threadTitle");
     thread_title_label_->setReadOnly(true);
     thread_title_label_->setFrame(false);
     thread_title_label_->setFocusPolicy(Qt::NoFocus);
     thread_title_label_->setCursor(Qt::ArrowCursor);
+
+    /* Divider between title and actions */
+    auto* header_divider = new QWidget(content);
+    header_divider->setFixedSize(1, 24);
+    header_divider->setStyleSheet("background: #3f4147;");
+
     call_button_ = new QPushButton("Call", content);
     call_button_->setObjectName("primaryButton");
     group_button_ = new QPushButton("Group", content);
@@ -316,14 +401,17 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     status_label_ = new QLabel("Disconnected", content);
     status_label_->setObjectName("connectionPill");
     status_label_->setProperty("state", "disconnected");
+
+    header_row->addWidget(channel_hash);
     header_row->addWidget(thread_title_label_, 1);
+    header_row->addWidget(header_divider);
     header_row->addWidget(call_button_);
     header_row->addWidget(group_button_);
     header_row->addWidget(invite_button_);
     header_row->addWidget(presence_indicator_);
     header_row->addWidget(presence_combo_);
     header_row->addWidget(status_label_);
-    content_layout->addLayout(header_row);
+    content_layout->addWidget(header_bar);
 
     banner_label_ = new QLabel(content);
     banner_label_->setObjectName("chatBanner");
@@ -336,7 +424,7 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     chat_panel_ = new QWidget(content_stack_);
     auto* chat_layout = new QVBoxLayout(chat_panel_);
     chat_layout->setContentsMargins(0, 0, 0, 0);
-    chat_layout->setSpacing(10);
+    chat_layout->setSpacing(0);
 
     call_panel_ = new QWidget(chat_panel_);
     call_panel_->setObjectName("callPanel");
@@ -400,32 +488,54 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     messages_list_->setSelectionMode(QAbstractItemView::NoSelection);
     messages_list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     messages_list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    messages_list_->setSpacing(4);
+    messages_list_->setSpacing(0);
 
     timeline_stack_->addWidget(empty_state_label_);
     timeline_stack_->addWidget(messages_list_);
     timeline_stack_->setCurrentWidget(empty_state_label_);
     chat_layout->addWidget(timeline_stack_, 1);
 
-    auto* compose_row = new QHBoxLayout();
-    compose_row->setSpacing(10);
-    compose_input_ = new QPlainTextEdit(chat_panel_);
+    typing_indicator_label_ = new QLabel(chat_panel_);
+    typing_indicator_label_->setObjectName("conversationSubtitle");
+    typing_indicator_label_->setWordWrap(true);
+    typing_indicator_label_->setVisible(false);
+    typing_indicator_label_->setContentsMargins(16, 4, 16, 2);
+    chat_layout->addWidget(typing_indicator_label_);
+
+    auto* compose_container = new QWidget(chat_panel_);
+    compose_container->setObjectName("chatPane");
+    auto* compose_outer = new QHBoxLayout(compose_container);
+    compose_outer->setContentsMargins(16, 0, 16, 16);
+    compose_outer->setSpacing(0);
+
+    auto* compose_bar = new QWidget(compose_container);
+    compose_bar->setStyleSheet("background: #383a40; border-radius: 8px;");
+    auto* compose_row = new QHBoxLayout(compose_bar);
+    compose_row->setContentsMargins(4, 4, 4, 4);
+    compose_row->setSpacing(4);
+    compose_input_ = new QPlainTextEdit(compose_bar);
     compose_input_->setObjectName("composeInput");
-    compose_input_->setPlaceholderText("Message #dm");
+    compose_input_->setPlaceholderText("Message #channel");
     compose_input_->setMaximumBlockCount(200);
-    compose_input_->setFixedHeight(96);
+    compose_input_->setFixedHeight(44);
     compose_input_->installEventFilter(this);
 
-    attach_button_ = new QPushButton("Attach", chat_panel_);
+    attach_button_ = new QPushButton("+", compose_bar);
     attach_button_->setObjectName("secondaryButton");
-    send_button_ = new QPushButton("Send", chat_panel_);
+    attach_button_->setFixedSize(32, 32);
+    attach_button_->setStyleSheet(
+        "QPushButton { background: transparent; border: none; color: #b5bac1;"
+        " font-size: 20px; font-weight: 700; border-radius: 4px; padding: 0; }"
+        "QPushButton:hover { color: #dbdee1; background: #4e5058; }");
+    send_button_ = new QPushButton("Send", compose_bar);
     send_button_->setObjectName("primaryButton");
     send_button_->setEnabled(false);
 
-    compose_row->addWidget(compose_input_, 1);
     compose_row->addWidget(attach_button_);
+    compose_row->addWidget(compose_input_, 1);
     compose_row->addWidget(send_button_);
-    chat_layout->addLayout(compose_row);
+    compose_outer->addWidget(compose_bar, 1);
+    chat_layout->addWidget(compose_container);
 
     contacts_panel_ = new QWidget(content_stack_);
     auto* contacts_layout = new QVBoxLayout(contacts_panel_);
@@ -456,6 +566,18 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     banner_timer_->setSingleShot(true);
     connect(banner_timer_, &QTimer::timeout, this, [this]() {
         banner_label_->setVisible(false);
+    });
+
+    typing_idle_timer_ = new QTimer(this);
+    typing_idle_timer_->setSingleShot(true);
+    typing_idle_timer_->setInterval(1600);
+    connect(typing_idle_timer_, &QTimer::timeout, this, [this]() {
+        if (!local_typing_active_) {
+            return;
+        }
+        local_typing_active_ = false;
+        emit TypingStateChanged(local_typing_conversation_id_, false);
+        local_typing_conversation_id_.clear();
     });
 
     auto* focus_peer_shortcut = new QShortcut(QKeySequence("Ctrl+K"), this);
@@ -522,7 +644,31 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     });
 
     connect(compose_input_, &QPlainTextEdit::textChanged, this, [this]() {
-        SetSendEnabled(!ComposeText().trimmed().isEmpty());
+        const bool has_text = !ComposeText().trimmed().isEmpty();
+        SetSendEnabled(has_text);
+        const QString conversation_id = SelectedConversation();
+        if (conversation_id.isEmpty() || contacts_mode_active_) {
+            return;
+        }
+        if (has_text) {
+            if (!local_typing_active_) {
+                local_typing_active_ = true;
+                local_typing_conversation_id_ = conversation_id;
+                emit TypingStateChanged(conversation_id, true);
+            }
+            if (typing_idle_timer_ != nullptr) {
+                typing_idle_timer_->start();
+            }
+            return;
+        }
+        if (local_typing_active_) {
+            local_typing_active_ = false;
+            if (typing_idle_timer_ != nullptr) {
+                typing_idle_timer_->stop();
+            }
+            emit TypingStateChanged(local_typing_conversation_id_, false);
+            local_typing_conversation_id_.clear();
+        }
     });
 
     connect(presence_combo_, &QComboBox::currentIndexChanged, this, [this](int index) {
@@ -539,6 +685,14 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     });
 
     connect(conversations_list_, &QListWidget::itemSelectionChanged, this, [this]() {
+        if (local_typing_active_) {
+            local_typing_active_ = false;
+            if (typing_idle_timer_ != nullptr) {
+                typing_idle_timer_->stop();
+            }
+            emit TypingStateChanged(local_typing_conversation_id_, false);
+            local_typing_conversation_id_.clear();
+        }
         const QString id = SelectedConversation();
         SyncContactSelection(id);
         SetContactsMode(false);
@@ -556,6 +710,14 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     });
 
     connect(contacts_panel_list_, &QListWidget::itemSelectionChanged, this, [this]() {
+        if (local_typing_active_) {
+            local_typing_active_ = false;
+            if (typing_idle_timer_ != nullptr) {
+                typing_idle_timer_->stop();
+            }
+            emit TypingStateChanged(local_typing_conversation_id_, false);
+            local_typing_conversation_id_.clear();
+        }
         const auto* selected = contacts_panel_list_->currentItem();
         if (selected == nullptr) {
             return;
@@ -593,11 +755,24 @@ QString ChatWidget::SelectedConversation() const {
 }
 
 void ChatWidget::SetSelectedConversation(const QString& conversation_id) {
+    const QString previous_conversation = SelectedConversation();
+    if (local_typing_active_ && previous_conversation != conversation_id) {
+        local_typing_active_ = false;
+        if (typing_idle_timer_ != nullptr) {
+            typing_idle_timer_->stop();
+        }
+        emit TypingStateChanged(local_typing_conversation_id_, false);
+        local_typing_conversation_id_.clear();
+    }
     QSignalBlocker signal_blocker(conversations_list_);
     QSignalBlocker contact_signal_blocker(contacts_panel_list_);
     if (conversation_id.isEmpty()) {
         conversations_list_->setCurrentItem(nullptr);
         contacts_panel_list_->setCurrentItem(nullptr);
+        if (typing_indicator_label_ != nullptr) {
+            typing_indicator_label_->clear();
+            typing_indicator_label_->setVisible(false);
+        }
         RefreshConversationSelectionStyles();
         UpdateThreadHeader();
         UpdateCallControls();
@@ -635,22 +810,31 @@ QWidget* ChatWidget::CreateConversationItemWidget(
     row->setProperty("selected", selected);
 
     auto* layout = new QHBoxLayout(row);
-    layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(8);
+    layout->setContentsMargins(8, 6, 8, 6);
+    layout->setSpacing(10);
 
-    auto* status_dot = new QLabel(row);
-    status_dot->setObjectName("presenceDot");
-    const QString normalized_status = NormalizePresenceStatus(item.status);
-    status_dot->setProperty("state", normalized_status);
-    status_dot->setFixedSize(10, 10);
-    status_dot->setStyleSheet(
+    auto* avatar = new QLabel(row);
+    avatar->setObjectName("conversationAvatar");
+    avatar->setAlignment(Qt::AlignCenter);
+    avatar->setFixedSize(32, 32);
+    QString avatar_initial = item.title.trimmed();
+    if (avatar_initial.isEmpty()) {
+        avatar_initial = "?";
+    }
+    const bool is_group = item.conversation_type.trimmed().toLower() == "group";
+    avatar->setText(is_group ? "G" : avatar_initial.left(1).toUpper());
+    const QString avatar_bg = is_group ? "#3ba55d" : "#5865f2";
+    avatar->setStyleSheet(
         QString(
             "background:%1;"
-            "border-radius:5px;"
-            "min-width:10px;max-width:10px;"
-            "min-height:10px;max-height:10px;")
-            .arg(PresenceColorForStatus(normalized_status)));
-    layout->addWidget(status_dot, 0, Qt::AlignTop);
+            "border-radius:16px;"
+            "min-width:32px;max-width:32px;"
+            "min-height:32px;max-height:32px;"
+            "color:#ffffff;"
+            "font-size:13px;"
+            "font-weight:600;")
+            .arg(avatar_bg));
+    layout->addWidget(avatar, 0, Qt::AlignVCenter);
 
     auto* text_col = new QVBoxLayout();
     text_col->setSpacing(2);
@@ -694,40 +878,177 @@ QWidget* ChatWidget::CreateConversationItemWidget(
     return row;
 }
 
-QWidget* ChatWidget::CreateThreadMessageWidget(const ThreadMessageView& message) const {
+QWidget* ChatWidget::CreateThreadMessageWidget(const ThreadMessageView& message) {
     auto* row = new QWidget();
-    row->setObjectName("messageRow");
+    row->setObjectName(message.system ? "systemMessageRow" : "messageRow");
     row->setProperty("outgoing", message.outgoing);
 
     auto* row_layout = new QHBoxLayout(row);
-    row_layout->setContentsMargins(10, message.grouped_with_previous ? 2 : 8, 10, 2);
-    row_layout->setSpacing(0);
+    row_layout->setContentsMargins(16, message.grouped_with_previous ? 1 : 12, 48, message.system ? 4 : 1);
+    row_layout->setSpacing(16);
 
-    auto* bubble = new QWidget(row);
+    if (message.system) {
+        QString icon_text = "SYS";
+        const QString lowered = message.body.trimmed().toLower();
+        if (lowered.contains("call")) {
+            icon_text = "CALL";
+        } else if (lowered.contains("group")) {
+            icon_text = "GROUP";
+        }
+
+        auto* icon = new QLabel(icon_text, row);
+        icon->setObjectName("systemMessageIcon");
+        icon->setAlignment(Qt::AlignCenter);
+        icon->setFixedHeight(22);
+        row_layout->addWidget(icon, 0, Qt::AlignTop);
+
+        auto* text = new QLabel(QString("%1  %2").arg(message.body, message.created_at_display), row);
+        text->setObjectName("systemMessageText");
+        text->setWordWrap(true);
+        text->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        row_layout->addWidget(text, 1, Qt::AlignTop);
+        return row;
+    }
+
+    auto* avatar = new QLabel(row);
+    avatar->setObjectName("messageAvatar");
+    avatar->setFixedSize(40, 40);
+    if (message.grouped_with_previous) {
+        avatar->setText({});
+        avatar->setProperty("grouped", true);
+    } else {
+        QString initial = message.sender_label.trimmed();
+        if (initial.isEmpty()) {
+            initial = "U";
+        }
+        avatar->setText(initial.left(1).toUpper());
+        avatar->setProperty("grouped", false);
+    }
+    row_layout->addWidget(avatar, 0, Qt::AlignTop);
+
+    auto* content = new QWidget(row);
+    auto* content_layout = new QVBoxLayout(content);
+    content_layout->setContentsMargins(0, 0, 0, 0);
+    content_layout->setSpacing(2);
+
+    auto* bubble = new QWidget(content);
     bubble->setObjectName("messageBubble");
     bubble->setProperty("outgoing", message.outgoing);
 
     auto* bubble_layout = new QVBoxLayout(bubble);
-    bubble_layout->setContentsMargins(10, 8, 10, 8);
+    bubble_layout->setContentsMargins(0, 0, 0, 0);
     bubble_layout->setSpacing(4);
 
     if (!message.grouped_with_previous) {
-        auto* meta = new QLabel(QString("%1  %2").arg(message.sender_label, message.created_at_display), bubble);
-        meta->setObjectName("messageMeta");
-        bubble_layout->addWidget(meta);
+        auto* meta_row = new QHBoxLayout();
+        meta_row->setSpacing(8);
+        auto* sender = new QLabel(message.sender_label, content);
+        sender->setObjectName("messageSender");
+        auto* timestamp = new QLabel(message.created_at_display, content);
+        timestamp->setObjectName("messageTimestamp");
+        meta_row->addWidget(sender);
+        meta_row->addWidget(timestamp);
+        meta_row->addStretch(1);
+        content_layout->addLayout(meta_row);
     }
 
     QString file_name;
     QByteArray file_bytes;
     qint64 file_size = 0;
-    const bool is_file = DecodeFileMessageBody(message.body, &file_name, &file_bytes, &file_size);
+    QString mime_type;
+    QString media_kind;
+    const bool is_file = DecodeFileMessageBody(
+        message.body,
+        &file_name,
+        &file_bytes,
+        &file_size,
+        &mime_type,
+        &media_kind);
     if (is_file) {
-        auto* file_label = new QLabel(
-            QString("Encrypted file: %1 (%2)").arg(file_name, HumanFileSize(file_size)),
+        if (media_kind.isEmpty()) {
+            if (mime_type.startsWith("image/")) {
+                media_kind = "image";
+            } else if (mime_type.startsWith("video/")) {
+                media_kind = "video";
+            } else {
+                media_kind = "file";
+            }
+        }
+
+        auto* file_title = new QLabel(
+            QString("%1 (%2)").arg(file_name, HumanFileSize(file_size)),
             bubble);
-        file_label->setObjectName("messageBody");
-        file_label->setWordWrap(true);
-        bubble_layout->addWidget(file_label);
+        file_title->setObjectName("messageBody");
+        file_title->setWordWrap(true);
+        bubble_layout->addWidget(file_title);
+
+        if (media_kind == "image") {
+            QPixmap image_preview;
+            image_preview.loadFromData(file_bytes);
+            if (!image_preview.isNull()) {
+                auto* image_label = new QLabel(bubble);
+                image_label->setObjectName("messageImage");
+                image_label->setPixmap(
+                    image_preview.scaledToWidth(320, Qt::SmoothTransformation));
+                image_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+                bubble_layout->addWidget(image_label);
+            }
+        } else if (media_kind == "video") {
+            auto* video_hint = new QLabel("Video attachment. Click play to view.", bubble);
+            video_hint->setObjectName("conversationSubtitle");
+            video_hint->setWordWrap(true);
+            bubble_layout->addWidget(video_hint);
+
+            auto* play_button = new QPushButton("Play video", bubble);
+            play_button->setObjectName("secondaryButton");
+            QObject::connect(play_button, &QPushButton::clicked, bubble, [file_name, file_bytes, this]() {
+                QTemporaryFile temp_file(QDir::tempPath() + "/blackwire_video_XXXXXX");
+                temp_file.setAutoRemove(false);
+                if (!temp_file.open()) {
+                    return;
+                }
+                temp_file.write(file_bytes);
+                temp_file.flush();
+                const QString temp_path = temp_file.fileName();
+                temp_file.close();
+
+                QDialog dialog(this);
+                dialog.setWindowTitle(QString("Video: %1").arg(file_name));
+                dialog.resize(800, 520);
+                auto* layout = new QVBoxLayout(&dialog);
+                auto* video = new QVideoWidget(&dialog);
+                video->setMinimumSize(640, 360);
+                layout->addWidget(video, 1);
+
+                auto* controls = new QHBoxLayout();
+                auto* play = new QPushButton("Play", &dialog);
+                auto* pause = new QPushButton("Pause", &dialog);
+                auto* close = new QPushButton("Close", &dialog);
+                play->setObjectName("primaryButton");
+                pause->setObjectName("secondaryButton");
+                close->setObjectName("secondaryButton");
+                controls->addWidget(play);
+                controls->addWidget(pause);
+                controls->addStretch(1);
+                controls->addWidget(close);
+                layout->addLayout(controls);
+
+                auto* audio = new QAudioOutput(&dialog);
+                auto* player = new QMediaPlayer(&dialog);
+                player->setAudioOutput(audio);
+                player->setVideoOutput(video);
+                player->setSource(QUrl::fromLocalFile(temp_path));
+                QObject::connect(play, &QPushButton::clicked, player, &QMediaPlayer::play);
+                QObject::connect(pause, &QPushButton::clicked, player, &QMediaPlayer::pause);
+                QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+                QObject::connect(&dialog, &QDialog::finished, &dialog, [temp_path]() {
+                    QFile::remove(temp_path);
+                });
+
+                dialog.exec();
+            });
+            bubble_layout->addWidget(play_button, 0, Qt::AlignLeft);
+        }
 
         auto* save_button = new QPushButton("Save file", bubble);
         save_button->setObjectName("secondaryButton");
@@ -745,20 +1066,65 @@ QWidget* ChatWidget::CreateThreadMessageWidget(const ThreadMessageView& message)
         });
         bubble_layout->addWidget(save_button, 0, Qt::AlignLeft);
     } else {
-        auto* body = new QLabel(message.body, bubble);
+        auto* body = new QLabel(bubble);
         body->setObjectName("messageBody");
         body->setWordWrap(true);
-        body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        body->setTextFormat(Qt::MarkdownText);
+        body->setOpenExternalLinks(false);
+        body->setTextInteractionFlags(Qt::TextBrowserInteraction | Qt::TextSelectableByMouse);
+        body->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        body->setMaximumWidth(680);
+        body->setText(SanitizeMarkdownSource(message.body));
+        QObject::connect(body, &QLabel::linkActivated, body, [](const QString& url) {
+            const auto answer = QMessageBox::question(
+                nullptr,
+                "Open Link",
+                QString("Do you want to open this link?\n\n%1").arg(url),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer == QMessageBox::Yes) {
+                QDesktopServices::openUrl(QUrl(url));
+            }
+        });
         bubble_layout->addWidget(body);
     }
 
-    if (message.outgoing) {
-        row_layout->addStretch(1);
-        row_layout->addWidget(bubble, 0);
-    } else {
-        row_layout->addWidget(bubble, 0);
-        row_layout->addStretch(1);
+    if (message.outgoing && is_file) {
+        const QString attachment_status = message.attachment_status.trimmed().toLower();
+        if (!attachment_status.isEmpty() && attachment_status != "success") {
+            QString status_text = "Attachment status: ";
+            if (attachment_status == "queued") {
+                status_text += "Queued";
+            } else if (attachment_status == "sending") {
+                status_text += "Sending";
+            } else if (attachment_status == "failed") {
+                status_text += "Failed";
+            } else {
+                status_text += attachment_status;
+            }
+            auto* status_label = new QLabel(status_text, bubble);
+            status_label->setObjectName("conversationSubtitle");
+            bubble_layout->addWidget(status_label);
+        }
+
+        if (message.attachment_retryable) {
+            auto* retry_button = new QPushButton("Retry", bubble);
+            retry_button->setObjectName("secondaryButton");
+            QObject::connect(retry_button, &QPushButton::clicked, bubble, [this, message]() {
+                emit RetryAttachmentRequested(message.id);
+            });
+            bubble_layout->addWidget(retry_button, 0, Qt::AlignLeft);
+        }
     }
+
+    if (message.outgoing && !message.delivery_badge.trimmed().isEmpty()) {
+        auto* badge = new QLabel(message.delivery_badge, bubble);
+        badge->setObjectName("conversationSubtitle");
+        bubble_layout->addWidget(badge, 0, Qt::AlignRight);
+    }
+
+    content_layout->addWidget(bubble, 0, Qt::AlignLeft);
+    row_layout->addWidget(content, 1);
 
     return row;
 }
@@ -781,29 +1147,36 @@ void ChatWidget::SetConversationList(const std::vector<ConversationListItemView>
         dm_item->setData(kRolePeerAddress, item.peer_address);
         dm_item->setData(kRoleGroupName, item.group_name);
         dm_item->setData(kRoleMemberCount, item.member_count);
-        dm_item->setSizeHint(QSize(200, 64));
+        dm_item->setSizeHint(QSize(200, 48));
         auto* dm_row = CreateConversationItemWidget(item, item.id == selected_id, true);
         conversations_list_->setItemWidget(dm_item, dm_row);
 
-        auto* contact_item = new QListWidgetItem(contacts_panel_list_);
-        contact_item->setData(kRoleConversationId, item.id);
-        contact_item->setData(kRoleTitle, item.title);
-        contact_item->setData(kRoleSubtitle, item.subtitle);
-        contact_item->setData(kRoleStatus, item.status);
-        contact_item->setData(kRoleConversationType, item.conversation_type);
-        contact_item->setData(kRoleCanManageMembers, item.can_manage_members);
-        contact_item->setData(kRolePeerAddress, item.peer_address);
-        contact_item->setData(kRoleGroupName, item.group_name);
-        contact_item->setData(kRoleMemberCount, item.member_count);
-        contact_item->setSizeHint(QSize(200, 54));
-        ConversationListItemView contact_view = item;
-        contact_view.subtitle = QString("Status: %1").arg(NormalizePresenceStatus(item.status));
-        auto* contact_row = CreateConversationItemWidget(contact_view, item.id == selected_id, false);
-        contacts_panel_list_->setItemWidget(contact_item, contact_row);
+        // Only show direct messages in the Friends / contacts panel.
+        const bool is_group = item.conversation_type.trimmed().compare("group", Qt::CaseInsensitive) == 0;
+        QListWidgetItem* contact_item = nullptr;
+        if (!is_group) {
+            contact_item = new QListWidgetItem(contacts_panel_list_);
+            contact_item->setData(kRoleConversationId, item.id);
+            contact_item->setData(kRoleTitle, item.title);
+            contact_item->setData(kRoleSubtitle, item.subtitle);
+            contact_item->setData(kRoleStatus, item.status);
+            contact_item->setData(kRoleConversationType, item.conversation_type);
+            contact_item->setData(kRoleCanManageMembers, item.can_manage_members);
+            contact_item->setData(kRolePeerAddress, item.peer_address);
+            contact_item->setData(kRoleGroupName, item.group_name);
+            contact_item->setData(kRoleMemberCount, item.member_count);
+            contact_item->setSizeHint(QSize(200, 44));
+            ConversationListItemView contact_view = item;
+            contact_view.subtitle = QString("Status: %1").arg(NormalizePresenceStatus(item.status));
+            auto* contact_row = CreateConversationItemWidget(contact_view, item.id == selected_id, false);
+            contacts_panel_list_->setItemWidget(contact_item, contact_row);
+        }
 
         if (!selected_id.isEmpty() && item.id == selected_id) {
             conversations_list_->setCurrentItem(dm_item);
-            contacts_panel_list_->setCurrentItem(contact_item);
+            if (contact_item != nullptr) {
+                contacts_panel_list_->setCurrentItem(contact_item);
+            }
         }
     }
 
@@ -872,6 +1245,10 @@ void ChatWidget::UpdateThreadHeader() {
         thread_title_label_->setFocusPolicy(Qt::NoFocus);
         thread_title_label_->setCursor(Qt::ArrowCursor);
         thread_title_label_->setToolTip({});
+        if (typing_indicator_label_ != nullptr) {
+            typing_indicator_label_->clear();
+            typing_indicator_label_->setVisible(false);
+        }
         return;
     }
     const auto* selected = conversations_list_->currentItem();
@@ -882,6 +1259,10 @@ void ChatWidget::UpdateThreadHeader() {
         thread_title_label_->setCursor(Qt::ArrowCursor);
         thread_title_label_->setToolTip({});
         empty_state_label_->setText("Select a conversation to start chatting.");
+        if (typing_indicator_label_ != nullptr) {
+            typing_indicator_label_->clear();
+            typing_indicator_label_->setVisible(false);
+        }
         return;
     }
 
@@ -948,6 +1329,9 @@ void ChatWidget::SetContactsMode(bool enabled) {
     UpdateContactsButtonState();
     UpdateThreadHeader();
     UpdateCallControls();
+    if (typing_indicator_label_ != nullptr) {
+        typing_indicator_label_->setVisible(!contacts_mode_active_ && !typing_indicator_label_->text().trimmed().isEmpty());
+    }
 }
 
 void ChatWidget::UpdateContactsButtonState() {
@@ -999,12 +1383,26 @@ void ChatWidget::UpdateCallControls() {
     invite_button_->setEnabled(idle_and_chat_ready && selected_owner_managed_group);
     accept_call_button_->setVisible(state == "incoming_ringing");
     decline_call_button_->setVisible(state == "incoming_ringing");
+    accept_call_button_->setText(selected_group ? "Join" : "Accept");
+    decline_call_button_->setText(selected_group ? "Ignore" : "Decline");
     mute_call_button_->setVisible(state == "active");
     mute_call_button_->setText(call_state_.muted ? "Unmute" : "Mute");
     end_call_button_->setVisible(state == "active" || state == "outgoing_ringing" || state == "ending");
     end_call_button_->setEnabled(state != "ending");
 
-    QString peer_title = thread_title_label_->text().trimmed();
+    // Derive peer title from the call target (call_state_) rather than the
+    // currently-selected conversation header so that switching DMs during an
+    // active call does not change the displayed call target.
+    QString peer_title;
+    if (state != "idle") {
+        peer_title = call_state_.peer_user_id.trimmed();
+        if (peer_title.contains('@')) {
+            peer_title = peer_title.section('@', 0, 0).trimmed();
+        }
+    }
+    if (peer_title.isEmpty()) {
+        peer_title = thread_title_label_->text().trimmed();
+    }
     if (peer_title.isEmpty()) {
         peer_title = "Direct Message";
     }
@@ -1214,6 +1612,18 @@ void ChatWidget::SetUserStatus(const QString& status) {
     UpdatePresenceIndicator(normalized);
 }
 
+void ChatWidget::SetTypingIndicator(const QString& conversation_id, const QString& text) {
+    if (typing_indicator_label_ == nullptr) {
+        return;
+    }
+    if (!conversation_id.trimmed().isEmpty() && conversation_id != SelectedConversation()) {
+        return;
+    }
+    const QString normalized = text.trimmed();
+    typing_indicator_label_->setText(normalized);
+    typing_indicator_label_->setVisible(!contacts_mode_active_ && !normalized.isEmpty());
+}
+
 void ChatWidget::UpdatePresenceIndicator(const QString& status) {
     if (presence_indicator_ == nullptr) {
         return;
@@ -1259,6 +1669,14 @@ void ChatWidget::ShowBanner(const QString& text, const QString& severity) {
 }
 
 void ChatWidget::ClearCompose() {
+    if (local_typing_active_) {
+        local_typing_active_ = false;
+        if (typing_idle_timer_ != nullptr) {
+            typing_idle_timer_->stop();
+        }
+        emit TypingStateChanged(local_typing_conversation_id_, false);
+        local_typing_conversation_id_.clear();
+    }
     compose_input_->clear();
     SetSendEnabled(false);
 }

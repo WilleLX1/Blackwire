@@ -1,4 +1,5 @@
 from app.models.conversation import Conversation
+from app.models.conversation_read_cursor import ConversationReadCursor
 from app.models.conversation_member import ConversationMember
 from app.models.delivery_queue import DeliveryQueue
 from app.models.device import ActiveDevice, Device
@@ -23,6 +24,7 @@ __all__ = [
     "Device",
     "ActiveDevice",
     "Conversation",
+    "ConversationReadCursor",
     "ConversationMember",
     "GroupMembershipEvent",
     "GroupCallSession",

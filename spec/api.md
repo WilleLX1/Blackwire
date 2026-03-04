@@ -1,141 +1,231 @@
-# Blackwire v0.1 API Spec
+# Blackwire API Spec (`v2` Primary, `v1` Compatible)
 
-Base URL path prefix: `/api/v1`
+## Versioning
 
-## Authentication
+- Primary client integration surface: `/api/v2`
+- Legacy compatibility surface: `/api/v1` (kept operational in `v0.3` wave 1)
 
-### `POST /auth/register`
-Registers a local user and returns auth tokens.
-`user` payload includes:
-- `id`
-- `username`
-- `created_at`
-- `user_address` (canonical `username@onion`)
-- `home_server_onion`
+---
 
-### `POST /auth/login`
-Authenticates and issues access/refresh tokens.
-Returns the same `user` fields listed above.
+## `/api/v2` Core
 
-### `POST /auth/refresh`
-Rotates refresh token and returns a new pair.
-Returns the same `user` fields listed above.
+### Authentication and Identity
 
-### `POST /auth/logout`
-Revokes a refresh token.
+- `POST /api/v2/auth/register`
+- `POST /api/v2/auth/login`
+- `POST /api/v2/auth/refresh`
+- `POST /api/v2/auth/logout`
+- `POST /api/v2/auth/bind-device`
+- `GET /api/v2/me`
 
-## Identity and Devices
+### Devices and Keys
 
-### `GET /me`
-Returns current authenticated user.
-Response includes:
-- `id`
-- `username`
-- `created_at`
-- `user_address`
-- `home_server_onion`
+- `POST /api/v2/devices/register`
+- `GET /api/v2/devices`
+- `POST /api/v2/devices/{device_uid}/revoke`
+- `GET /api/v2/users/resolve-devices?peer_address=...`
+- `GET /api/v2/users/resolve-prekeys?peer_address=...`
+- `POST /api/v2/keys/prekeys/upload`
 
-### `POST /devices/register`
-Registers a new device and marks it active.
+### Presence
 
-### `GET /users/{username}/device`
-Legacy local-only device lookup.
+- `POST /api/v2/presence/set`
+- `POST /api/v2/presence/resolve`
 
-### `GET /users/resolve-device?peer_address=username@onion`
-Resolves local or federated active recipient device for a canonical peer address.
-Client always calls this on its home server; remote lookup is server-to-server federation.
+### Conversations and Messages
 
-## Conversations
+- `POST /api/v2/conversations/dm`
+- `POST /api/v2/conversations/group`
+- `GET /api/v2/conversations`
+- `GET /api/v2/conversations/{conversation_id}/members`
+- `POST /api/v2/conversations/{conversation_id}/members/invite`
+- `POST /api/v2/conversations/{conversation_id}/members/{member_address}/remove`
+- `POST /api/v2/conversations/{conversation_id}/invites/accept`
+- `POST /api/v2/conversations/{conversation_id}/leave`
+- `POST /api/v2/conversations/{conversation_id}/rename`
+- `GET /api/v2/conversations/{conversation_id}/recipients`
+- `GET /api/v2/conversations/{conversation_id}/messages`
+- `POST /api/v2/messages/send`
 
-### `POST /conversations/dm`
-Creates/returns a DM conversation.
+---
 
-Request supports:
-- `peer_address` (`username@onion`) for canonical local/remote routing.
-- `peer_username` as local-only backward-compatible alias.
+## `v0.3b` Additions (`/api/v2`)
 
-Response includes:
-- `id`
-- `kind` (`local` or `remote`)
-- `user_a_id`, `user_b_id` (local conversations)
-- `local_user_id` (remote conversations)
-- `created_at`
-- `peer_username`
-- `peer_server_onion`
-- `peer_address`
+### Typing Indicator Write Contract
 
-### `GET /conversations`
-Lists local and federated conversations with the same fields above.
+`POST /api/v2/conversations/{conversation_id}/typing`
 
-### `GET /conversations/{conversation_id}/messages`
-Lists stored ciphertext envelopes for a conversation.
+Request:
 
-## Messaging
+```json
+{
+  "state": "on",
+  "client_ts_ms": 1700000000000
+}
+```
 
-### `POST /messages/send`
-Sends a ciphertext envelope to the target device.
+Response:
 
-Response message fields include:
-- `sender_user_id` (nullable for federated relayed messages)
-- `sender_address` (canonical sender identity)
-- `sender_device_id`
-- `envelope_json`
+```json
+{
+  "ok": true,
+  "expires_in_ms": 6000
+}
+```
 
-## WebSocket
+Rules:
 
-### `GET /ws`
-Authenticated websocket for message delivery and voice signaling.
-Requires `Authorization: Bearer <access_token>` during websocket handshake.
+1. `state` is `on|off`.
+2. Typing is ephemeral and not persisted.
+3. Sender is excluded from fanout.
 
-Server `message.new` payload includes:
-- `message.sender_user_id`
-- `message.sender_address`
+### Read Cursor Write and Query Contracts
 
-Server call events keep existing names and add address fields:
-- `call.incoming.from_user_address`
-- `call.ringing.peer_user_address`
-- `call.accepted.peer_user_address`
-- `call.audio.from_user_address`
+`POST /api/v2/conversations/{conversation_id}/read`
 
-Client events remain:
+Request:
+
+```json
+{
+  "last_read_message_id": "message-id",
+  "last_read_sent_at_ms": 1700000000123
+}
+```
+
+Response:
+
+```json
+{
+  "conversation_id": "conversation-id",
+  "reader_user_address": "alice@local.invalid",
+  "last_read_message_id": "message-id",
+  "last_read_sent_at_ms": 1700000000123,
+  "updated_at": "2026-03-01T12:00:00.000000+00:00"
+}
+```
+
+`GET /api/v2/conversations/{conversation_id}/read`
+
+Response:
+
+```json
+{
+  "conversation_id": "conversation-id",
+  "cursors": [
+    {
+      "user_address": "alice@local.invalid",
+      "last_read_message_id": "message-id",
+      "last_read_sent_at_ms": 1700000000123,
+      "updated_at": "2026-03-01T12:00:00.000000+00:00"
+    }
+  ]
+}
+```
+
+Rules:
+
+1. Cursor is persisted per `(conversation_id, user_id)`.
+2. Updates are monotonic; stale regressions are treated as no-op.
+
+### System Version Contract
+
+`GET /api/v2/system/version`
+
+Response:
+
+```json
+{
+  "server_version": "0.3.0",
+  "api_version": "v2",
+  "git_commit": "abc1234",
+  "build_timestamp": "2026-03-01T00:00:00Z"
+}
+```
+
+---
+
+## `/api/v2/ws` Events
+
+### Client-to-server events
+
 - `message.ack`
 - `call.offer`
 - `call.accept`
 - `call.reject`
 - `call.end`
-- `call.audio`
+- `call.audio` (legacy WS audio mode when enabled)
+- `call.webrtc.offer`
+- `call.webrtc.answer`
+- `call.webrtc.ice`
 
-## Federation (`/federation`)
+Typing and read writes are REST-only (`POST /typing`, `POST /read`), not websocket writes.
 
-### `GET /federation/well-known`
-Returns:
-- `server_onion`
-- `federation_version`
-- `signing_public_key`
+### Server-to-client events
 
-### `GET /federation/users/{username}/device`
-Returns local user active device and canonical `peer_address` for remote servers.
+- `message.new`
+- `conversation.group.renamed`
+- `conversation.typing`
+- `conversation.read`
+- Voice and group call events (`call.*`, `call.group.*`)
 
-### Signed Federation Write Endpoints
+`conversation.typing` payload:
+
+```json
+{
+  "type": "conversation.typing",
+  "conversation_id": "conversation-id",
+  "from_user_address": "bob@local.invalid",
+  "state": "on",
+  "expires_in_ms": 6000,
+  "sent_at": "2026-03-01T12:00:00.000000+00:00"
+}
+```
+
+`conversation.read` payload:
+
+```json
+{
+  "type": "conversation.read",
+  "conversation_id": "conversation-id",
+  "reader_user_address": "bob@local.invalid",
+  "last_read_message_id": "message-id",
+  "last_read_sent_at_ms": 1700000000123,
+  "updated_at": "2026-03-01T12:00:00.000000+00:00"
+}
+```
+
+---
+
+## `/api/v2/federation`
+
+### Well-known and lookup
+
+- `GET /api/v2/federation/well-known`
+- `GET /api/v2/federation/users/{username}/devices`
+- `GET /api/v2/federation/users/{username}/prekeys`
+- `GET /api/v2/federation/groups/{group_uid}/snapshot`
+
+### Signed federation write endpoints
+
 Required headers:
+
 - `X-BW-Fed-Server`
 - `X-BW-Fed-Timestamp`
 - `X-BW-Fed-Nonce`
 - `X-BW-Fed-Signature`
 
-Canonical signature string:
-`METHOD\nPATH\nSHA256(BODY)\nTIMESTAMP\nNONCE\nSENDER_ONION`
+Write endpoints include:
 
-Write/control endpoints:
-- `POST /federation/messages/relay`
-- `POST /federation/calls/offer`
-- `POST /federation/calls/accept`
-- `POST /federation/calls/reject`
-- `POST /federation/calls/end`
-- `POST /federation/calls/audio`
+- `POST /api/v2/federation/messages/relay`
+- `POST /api/v2/federation/groups/events`
+- `POST /api/v2/federation/groups/invites/accept`
+- `POST /api/v2/federation/conversations/typing`
+- `POST /api/v2/federation/conversations/read`
+- group-call and call signaling relay routes (`/group-calls/*`, `/calls/webrtc-*`)
 
-## Health and Metrics
+---
 
-- `GET /health/live`
-- `GET /health/ready`
-- `GET /api/v1/metrics` (requires bearer auth)
+## `/api/v1` Compatibility Notes
+
+`/api/v1` remains functional in this wave for compatibility with older clients.  
+It retains the existing auth/device/conversation/message/ws/federation routes and semantics while `/api/v2` is the primary integration surface.

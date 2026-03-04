@@ -405,6 +405,57 @@ ConversationRecipientsOut QtApiClient::GetConversationRecipients(
     return json.get<ConversationRecipientsOut>();
 }
 
+ConversationTypingResponse QtApiClient::SendConversationTyping(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id,
+    const ConversationTypingRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/conversations/%1/typing").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<ConversationTypingResponse>();
+}
+
+ConversationReadCursorOut QtApiClient::SendConversationRead(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id,
+    const ConversationReadRequest& request) {
+    const nlohmann::json body = request;
+    const auto json = RequestJson(
+        "POST",
+        JoinUrl(base_url, QString("/conversations/%1/read").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        &body);
+    return json.get<ConversationReadCursorOut>();
+}
+
+ConversationReadStateOut QtApiClient::GetConversationReadState(
+    const std::string& base_url,
+    const std::string& access_token,
+    const std::string& conversation_id) {
+    const auto json = RequestJson(
+        "GET",
+        JoinUrl(base_url, QString("/conversations/%1/read").arg(QString::fromStdString(conversation_id))),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<ConversationReadStateOut>();
+}
+
+SystemVersionOut QtApiClient::GetSystemVersion(
+    const std::string& base_url,
+    const std::string& access_token) {
+    const auto json = RequestJson(
+        "GET",
+        JoinUrl(base_url, "/system/version"),
+        QString::fromStdString(access_token),
+        nullptr);
+    return json.get<SystemVersionOut>();
+}
+
 std::vector<MessageOut> QtApiClient::ListMessages(
     const std::string& base_url,
     const std::string& access_token,

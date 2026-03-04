@@ -42,6 +42,41 @@ class GroupLeaveRequestV2(BaseModel):
     reason: str | None = Field(default=None, max_length=64)
 
 
+class ConversationTypingRequestV2(BaseModel):
+    state: Literal["on", "off"] = "on"
+    client_ts_ms: int | None = Field(default=None, ge=0)
+
+
+class ConversationTypingResponseV2(BaseModel):
+    ok: bool = True
+    expires_in_ms: int = Field(ge=1)
+
+
+class ConversationReadRequestV2(BaseModel):
+    last_read_message_id: str = Field(min_length=8, max_length=64)
+    last_read_sent_at_ms: int = Field(ge=0)
+
+
+class ConversationReadCursorOutV2(BaseModel):
+    conversation_id: str
+    reader_user_address: str
+    last_read_message_id: str
+    last_read_sent_at_ms: int
+    updated_at: datetime
+
+
+class ConversationReadCursorEntryOutV2(BaseModel):
+    user_address: str
+    last_read_message_id: str
+    last_read_sent_at_ms: int
+    updated_at: datetime
+
+
+class ConversationReadStateOutV2(BaseModel):
+    conversation_id: str
+    cursors: list[ConversationReadCursorEntryOutV2]
+
+
 class ConversationOutV2(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

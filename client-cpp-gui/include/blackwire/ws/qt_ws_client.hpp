@@ -29,6 +29,8 @@ public:
         CallWebRtcAnswerHandler on_call_webrtc_answer,
         CallWebRtcIceHandler on_call_webrtc_ice,
         GroupRenamedHandler on_group_renamed,
+        ConversationTypingHandler on_conversation_typing,
+        ConversationReadHandler on_conversation_read,
         ErrorHandler on_error,
         StatusHandler on_status) override;
     void Connect(const std::string& base_url, const std::string& access_token) override;
@@ -65,6 +67,8 @@ private:
     CallWebRtcAnswerHandler on_call_webrtc_answer_;
     CallWebRtcIceHandler on_call_webrtc_ice_;
     GroupRenamedHandler on_group_renamed_;
+    ConversationTypingHandler on_conversation_typing_;
+    ConversationReadHandler on_conversation_read_;
     ErrorHandler on_error_;
     StatusHandler on_status_;
 
