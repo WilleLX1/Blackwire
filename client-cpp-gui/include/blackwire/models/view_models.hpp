@@ -56,10 +56,19 @@ struct ThreadMessageView {
     QString id;
     QString sender_label;
     QString body;
+    QString render_mode = "plain";  // plain|markdown|attachment
+    bool system = false;
     QString created_at_iso;
     QString created_at_display;
+    long long sent_at_ms = 0;
     bool outgoing = false;
     bool grouped_with_previous = false;
+    QString attachment_name;
+    QString attachment_mime_type;
+    QString attachment_media_kind;
+    QString attachment_status = "success";  // queued|sending|success|failed
+    bool attachment_retryable = false;
+    QString delivery_badge;
 };
 
 }  // namespace blackwire

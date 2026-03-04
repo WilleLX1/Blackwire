@@ -71,8 +71,13 @@ public:
     void SetPreferredAudioDevices(const QString& input_device_id, const QString& output_device_id);
     bool AcceptMessagesFromStrangers() const;
     void SetAcceptMessagesFromStrangers(bool enabled);
+    bool SaveMessageCache() const;
+    void SetSaveMessageCache(bool enabled);
     void AcceptMessageRequest(const QString& conversation_id);
     void IgnoreMessageRequest(const QString& conversation_id);
+    void PublishTypingState(const QString& conversation_id, bool typing);
+    void RetryFailedAttachment(const QString& message_id);
+    void LoadSystemVersion();
     void ResetLocalState();
 
     QString UserDisplayId() const;
@@ -81,6 +86,8 @@ public:
     QString ConnectionStatus() const;
     QString DiagnosticsReport() const;
     QString ServerAuthority() const;
+    QString ClientVersion() const;
+    QString ServerVersion() const;
 
 signals:
     void AuthStateChanged(bool authenticated, const QString& username);
@@ -88,6 +95,7 @@ signals:
     void ConversationListChanged(const std::vector<ConversationListItemView>& items);
     void ConversationSelected(const QString& conversation_id, const std::vector<ThreadMessageView>& thread_messages);
     void IncomingMessage(const QString& conversation_id, const ThreadMessageView& thread_message);
+    void TypingIndicatorChanged(const QString& conversation_id, const QString& text);
     void MessageRequestReceived(
         const QString& conversation_id,
         const QString& sender_username,
@@ -136,6 +144,15 @@ private:
     void RefreshConversationList();
     QString RenderMessage(const MessageOut& message, const std::string& plaintext) const;
     std::vector<ThreadMessageView> RenderThread(const std::string& conversation_id) const;
+    QString BuildTypingIndicatorText(const std::string& conversation_id) const;
+    void PruneExpiredTypingIndicators();
+    bool PublishReadCursorForConversation(const std::string& conversation_id);
+    void MergeReadCursor(
+        const std::string& conversation_id,
+        const QString& reader_user_address,
+        const QString& last_read_message_id,
+        long long last_read_sent_at_ms,
+        const QString& updated_at);
     std::optional<QString> NormalizePeerUsername(const QString& value, QString* error) const;
     bool IsWebSocketAuthError(const std::string& error) const;
     void ReauthenticateWebSocket();
@@ -196,6 +213,17 @@ private:
     std::unordered_map<std::string, AttachmentPolicyCacheEntry> peer_attachment_policy_cache_;
     std::optional<AttachmentPolicyCacheEntry> local_attachment_policy_cache_;
     std::unordered_map<std::string, QString> peer_presence_status_by_address_;
+    struct ReadCursorState {
+        QString last_read_message_id;
+        long long last_read_sent_at_ms = 0;
+        QString updated_at;
+    };
+    std::unordered_map<std::string, std::unordered_map<std::string, ReadCursorState>> read_cursors_by_conversation_;
+    std::unordered_map<std::string, long long> last_published_read_sent_at_by_conversation_;
+    std::unordered_map<std::string, std::unordered_map<std::string, qint64>> typing_expiry_ms_by_conversation_;
+    std::unordered_map<std::string, bool> local_typing_state_by_conversation_;
+    QString server_version_ = "unknown";
+    QString client_version_ = "0.1.0";
     QString user_presence_status_ = "active";
     std::map<std::string, std::vector<LocalMessage>> pending_request_messages_;
     std::map<std::string, QString> pending_request_senders_;
@@ -205,6 +233,7 @@ private:
     qint64 call_active_started_at_ms_ = 0;
     bool pending_outgoing_end_request_ = false;
     QTimer* presence_poll_timer_ = nullptr;
+    QTimer* typing_expiry_timer_ = nullptr;
     int audio_sequence_ = 0;
 };
 

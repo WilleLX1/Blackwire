@@ -135,6 +135,27 @@ public:
         const std::string& access_token,
         const std::string& conversation_id) = 0;
 
+    virtual ConversationTypingResponse SendConversationTyping(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id,
+        const ConversationTypingRequest& request) = 0;
+
+    virtual ConversationReadCursorOut SendConversationRead(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id,
+        const ConversationReadRequest& request) = 0;
+
+    virtual ConversationReadStateOut GetConversationReadState(
+        const std::string& base_url,
+        const std::string& access_token,
+        const std::string& conversation_id) = 0;
+
+    virtual SystemVersionOut GetSystemVersion(
+        const std::string& base_url,
+        const std::string& access_token) = 0;
+
     virtual std::vector<MessageOut> ListMessages(
         const std::string& base_url,
         const std::string& access_token,

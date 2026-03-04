@@ -96,3 +96,66 @@ TEST(MessageViewTest, OrdersThreadChronologicallySoLatestIsAtBottom) {
     EXPECT_EQ(views[1].body.toStdString(), "middle");
     EXPECT_EQ(views[2].body.toStdString(), "latest");
 }
+
+TEST(MessageViewTest, UsesAttachmentRenderModeForBwfileMessages) {
+    blackwire::LocalMessage attachment;
+    attachment.id = "a1";
+    attachment.sender_user_id = "self-id";
+    attachment.created_at = "2026-03-01T10:00:00Z";
+    attachment.plaintext = "bwfile://v1:eyJuYW1lIjoiZmlsZS50eHQiLCJkYXRhX2I2NCI6IlptOXYifQ==";
+
+    std::vector<blackwire::LocalMessage> input = {attachment};
+    const auto views = blackwire::BuildThreadMessageViews(input, "self-id", "peer");
+
+    ASSERT_EQ(views.size(), 1U);
+    EXPECT_EQ(views[0].render_mode.toStdString(), "attachment");
+}
+
+TEST(MessageViewTest, UsesMarkdownRenderModeForPlainMessages) {
+    blackwire::LocalMessage plain;
+    plain.id = "m1";
+    plain.sender_user_id = "self-id";
+    plain.created_at = "2026-03-01T10:00:00Z";
+    plain.plaintext = "**hello** _world_";
+
+    std::vector<blackwire::LocalMessage> input = {plain};
+    const auto views = blackwire::BuildThreadMessageViews(input, "self-id", "peer");
+
+    ASSERT_EQ(views.size(), 1U);
+    EXPECT_EQ(views[0].render_mode.toStdString(), "markdown");
+}
+
+TEST(MessageViewTest, SurfacesAttachmentStatusAndRetryability) {
+    blackwire::LocalMessage outgoing;
+    outgoing.id = "m1";
+    outgoing.sender_user_id = "self-id";
+    outgoing.created_at = "2026-03-01T10:00:00Z";
+    outgoing.plaintext = "bwfile://v1:eyJuYW1lIjoiYmlnLm1wNCIsImRhdGFfYjY0IjoiWm05diJ9";
+    outgoing.attachment_status = "failed";
+    outgoing.retry_payload = R"({"file_path":"C:\\tmp\\big.mp4"})";
+
+    std::vector<blackwire::LocalMessage> input = {outgoing};
+    const auto views = blackwire::BuildThreadMessageViews(input, "self-id", "peer");
+
+    ASSERT_EQ(views.size(), 1U);
+    EXPECT_EQ(views[0].attachment_status.toStdString(), "failed");
+    EXPECT_TRUE(views[0].attachment_retryable);
+}
+
+TEST(MessageViewTest, TreatsSenderlessMessagesAsSystemMessages) {
+    blackwire::LocalMessage system;
+    system.id = "sys-1";
+    system.created_at = "2026-03-01T10:00:00Z";
+    system.plaintext = "alice started a call that lasted 2 minutes.";
+    system.sender_user_id.clear();
+    system.sender_address.clear();
+
+    std::vector<blackwire::LocalMessage> input = {system};
+    const auto views = blackwire::BuildThreadMessageViews(input, "self-id", "peer");
+
+    ASSERT_EQ(views.size(), 1U);
+    EXPECT_TRUE(views[0].system);
+    EXPECT_EQ(views[0].render_mode.toStdString(), "system");
+    EXPECT_TRUE(views[0].sender_label.isEmpty());
+    EXPECT_FALSE(views[0].outgoing);
+}

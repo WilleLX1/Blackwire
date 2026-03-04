@@ -34,6 +34,7 @@ public:
     void SetIdentity(const QString& identity);
     void SetServerUrl(const QString& server_url);
     void SetDeviceInfo(const QString& label, const QString& device_id);
+    void SetVersionInfo(const QString& client_version, const QString& server_version);
     void SetConnectionStatus(const QString& status);
     void SetDiagnostics(const QString& diagnostics);
     void SetAccountDevices(const std::vector<DeviceOut>& devices, const QString& current_device_uid);
@@ -42,8 +43,10 @@ public:
         const std::vector<AudioDeviceOptionView>& output_devices);
     void SetSelectedAudioDevices(const QString& input_device_id, const QString& output_device_id);
     void SetAcceptMessagesFromStrangers(bool enabled);
+    void SetSaveMessageCache(bool enabled);
     void SetIntegrityWarning(const QString& warning);
     bool AcceptMessagesFromStrangers() const;
+    bool SaveMessageCache() const;
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -55,6 +58,7 @@ signals:
     void RevokeDeviceRequested(const QString& device_uid);
     void ApplyAudioDevicesRequested(const QString& input_device_id, const QString& output_device_id);
     void AcceptMessagesFromStrangersChanged(bool enabled);
+    void SaveMessageCacheChanged(bool enabled);
 
 private:
     void BuildLayout();
@@ -83,6 +87,8 @@ private:
     QLabel* server_url_value_ = nullptr;
     QLabel* device_label_value_ = nullptr;
     QLabel* device_id_value_ = nullptr;
+    QLabel* client_version_value_ = nullptr;
+    QLabel* server_version_value_ = nullptr;
     QLabel* connection_status_value_ = nullptr;
     QListWidget* account_devices_list_ = nullptr;
     QPushButton* revoke_device_button_ = nullptr;
@@ -90,6 +96,7 @@ private:
     QComboBox* output_device_combo_ = nullptr;
     QPushButton* apply_audio_button_ = nullptr;
     QCheckBox* accept_messages_checkbox_ = nullptr;
+    QCheckBox* save_message_cache_checkbox_ = nullptr;
     QCheckBox* mic_monitor_checkbox_ = nullptr;
     QProgressBar* mic_level_meter_ = nullptr;
     QLabel* mic_monitor_status_ = nullptr;

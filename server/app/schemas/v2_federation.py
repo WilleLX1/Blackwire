@@ -73,6 +73,24 @@ class FederationGroupInviteAcceptRequestV2(BaseModel):
     actor_address: str = Field(min_length=3, max_length=320)
 
 
+class FederationConversationTypingRelayRequestV2(BaseModel):
+    relay_id: str
+    conversation_id: str = Field(min_length=8, max_length=64)
+    from_user_address: str = Field(min_length=3, max_length=320)
+    state: str = Field(min_length=2, max_length=8)
+    expires_in_ms: int = Field(ge=1, le=60000)
+    sent_at: str = Field(min_length=8, max_length=128)
+
+
+class FederationConversationReadRelayRequestV2(BaseModel):
+    relay_id: str
+    conversation_id: str = Field(min_length=8, max_length=64)
+    reader_user_address: str = Field(min_length=3, max_length=320)
+    last_read_message_id: str = Field(min_length=8, max_length=64)
+    last_read_sent_at_ms: int = Field(ge=0)
+    updated_at: str = Field(min_length=8, max_length=128)
+
+
 class FederationCallWebRtcOfferRequestV2(BaseModel):
     relay_id: str
     call_id: str

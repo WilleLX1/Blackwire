@@ -239,6 +239,48 @@ struct PresenceResolveResponse {
     std::vector<PresencePeerOut> peers;
 };
 
+struct ConversationTypingRequest {
+    std::string state = "on";
+    long long client_ts_ms = 0;
+};
+
+struct ConversationTypingResponse {
+    bool ok = false;
+    int expires_in_ms = 0;
+};
+
+struct ConversationReadRequest {
+    std::string last_read_message_id;
+    long long last_read_sent_at_ms = 0;
+};
+
+struct ConversationReadCursorOut {
+    std::string conversation_id;
+    std::string reader_user_address;
+    std::string last_read_message_id;
+    long long last_read_sent_at_ms = 0;
+    std::string updated_at;
+};
+
+struct ConversationReadCursorEntryOut {
+    std::string user_address;
+    std::string last_read_message_id;
+    long long last_read_sent_at_ms = 0;
+    std::string updated_at;
+};
+
+struct ConversationReadStateOut {
+    std::string conversation_id;
+    std::vector<ConversationReadCursorEntryOut> cursors;
+};
+
+struct SystemVersionOut {
+    std::string server_version;
+    std::string api_version = "v2";
+    std::string git_commit;
+    std::string build_timestamp;
+};
+
 struct MessageSendResponse {
     bool duplicate = false;
     MessageOut message;
@@ -418,6 +460,22 @@ struct WsEventGroupRenamed {
     int event_seq = 0;
 };
 
+struct WsEventConversationTyping {
+    std::string conversation_id;
+    std::string from_user_address;
+    std::string state = "off";
+    int expires_in_ms = 0;
+    std::string sent_at;
+};
+
+struct WsEventConversationRead {
+    std::string conversation_id;
+    std::string reader_user_address;
+    std::string last_read_message_id;
+    long long last_read_sent_at_ms = 0;
+    std::string updated_at;
+};
+
 inline std::string JsonStringOrDefault(
     const nlohmann::json& j,
     const char* key,
@@ -444,9 +502,9 @@ inline void to_json(nlohmann::json& j, const UserOut& v) {
 }
 
 inline void from_json(const nlohmann::json& j, UserOut& v) {
-    j.at("id").get_to(v.id);
-    j.at("username").get_to(v.username);
-    j.at("created_at").get_to(v.created_at);
+    v.id = j.value("id", "");
+    v.username = j.value("username", "");
+    v.created_at = j.value("created_at", "");
     v.user_address = j.value("user_address", "");
     v.home_server_onion = j.value("home_server_onion", "");
 }
@@ -495,7 +553,7 @@ inline void to_json(nlohmann::json& j, const DeviceRegisterRequest& v) {
 }
 
 inline void from_json(const nlohmann::json& j, DeviceRegisterRequest& v) {
-    j.at("label").get_to(v.label);
+    v.label = j.value("label", "");
     v.ik_ed25519_pub = j.value("ik_ed25519_pub", j.value("pub_sign_key", ""));
     v.enc_x25519_pub = j.value("enc_x25519_pub", j.value("pub_dh_key", ""));
     v.pub_sign_key = j.value("pub_sign_key", v.ik_ed25519_pub);
@@ -523,8 +581,8 @@ inline void to_json(nlohmann::json& j, const DeviceOut& v) {
 inline void from_json(const nlohmann::json& j, DeviceOut& v) {
     v.id = j.value("id", j.value("device_uid", ""));
     v.device_uid = j.value("device_uid", v.id);
-    j.at("user_id").get_to(v.user_id);
-    j.at("label").get_to(v.label);
+    v.user_id = j.value("user_id", "");
+    v.label = j.value("label", "");
     v.ik_ed25519_pub = j.value("ik_ed25519_pub", j.value("pub_sign_key", ""));
     v.enc_x25519_pub = j.value("enc_x25519_pub", j.value("pub_dh_key", ""));
     v.status = j.value("status", "active");
@@ -535,7 +593,7 @@ inline void from_json(const nlohmann::json& j, DeviceOut& v) {
     } else {
         v.revoked_at.clear();
     }
-    j.at("created_at").get_to(v.created_at);
+    v.created_at = j.value("created_at", "");
 }
 
 inline void to_json(nlohmann::json& j, const UserDeviceLookup& v) {
@@ -551,7 +609,7 @@ inline void to_json(nlohmann::json& j, const UserDeviceLookup& v) {
 }
 
 inline void from_json(const nlohmann::json& j, UserDeviceLookup& v) {
-    j.at("username").get_to(v.username);
+    v.username = j.value("username", "");
     v.peer_address = j.value("peer_address", "");
     if (j.contains("device")) {
         j.at("device").get_to(v.device);
@@ -594,12 +652,12 @@ inline void to_json(nlohmann::json& j, const ConversationOut& v) {
 }
 
 inline void from_json(const nlohmann::json& j, ConversationOut& v) {
-    j.at("id").get_to(v.id);
+    v.id = j.value("id", "");
     v.kind = j.value("kind", "local");
     v.user_a_id = j.value("user_a_id", "");
     v.user_b_id = j.value("user_b_id", "");
     v.local_user_id = j.value("local_user_id", "");
-    j.at("created_at").get_to(v.created_at);
+    v.created_at = j.value("created_at", "");
     v.peer_username = j.value("peer_username", "");
     v.peer_server_onion = j.value("peer_server_onion", "");
     v.peer_address = j.value("peer_address", "");
@@ -1096,6 +1154,104 @@ inline void from_json(const nlohmann::json& j, PresenceResolveResponse& v) {
     v.peers = j.value("peers", std::vector<PresencePeerOut>{});
 }
 
+inline void to_json(nlohmann::json& j, const ConversationTypingRequest& v) {
+    j = nlohmann::json{
+        {"state", v.state},
+        {"client_ts_ms", v.client_ts_ms > 0 ? nlohmann::json(v.client_ts_ms) : nlohmann::json(nullptr)},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationTypingRequest& v) {
+    v.state = j.value("state", "on");
+    v.client_ts_ms = j.value("client_ts_ms", 0LL);
+}
+
+inline void to_json(nlohmann::json& j, const ConversationTypingResponse& v) {
+    j = nlohmann::json{
+        {"ok", v.ok},
+        {"expires_in_ms", v.expires_in_ms},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationTypingResponse& v) {
+    v.ok = j.value("ok", false);
+    v.expires_in_ms = j.value("expires_in_ms", 0);
+}
+
+inline void to_json(nlohmann::json& j, const ConversationReadRequest& v) {
+    j = nlohmann::json{
+        {"last_read_message_id", v.last_read_message_id},
+        {"last_read_sent_at_ms", v.last_read_sent_at_ms},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationReadRequest& v) {
+    v.last_read_message_id = j.value("last_read_message_id", "");
+    v.last_read_sent_at_ms = j.value("last_read_sent_at_ms", 0LL);
+}
+
+inline void to_json(nlohmann::json& j, const ConversationReadCursorOut& v) {
+    j = nlohmann::json{
+        {"conversation_id", v.conversation_id},
+        {"reader_user_address", v.reader_user_address},
+        {"last_read_message_id", v.last_read_message_id},
+        {"last_read_sent_at_ms", v.last_read_sent_at_ms},
+        {"updated_at", v.updated_at},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationReadCursorOut& v) {
+    v.conversation_id = j.value("conversation_id", "");
+    v.reader_user_address = j.value("reader_user_address", "");
+    v.last_read_message_id = j.value("last_read_message_id", "");
+    v.last_read_sent_at_ms = j.value("last_read_sent_at_ms", 0LL);
+    v.updated_at = j.value("updated_at", "");
+}
+
+inline void to_json(nlohmann::json& j, const ConversationReadCursorEntryOut& v) {
+    j = nlohmann::json{
+        {"user_address", v.user_address},
+        {"last_read_message_id", v.last_read_message_id},
+        {"last_read_sent_at_ms", v.last_read_sent_at_ms},
+        {"updated_at", v.updated_at},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationReadCursorEntryOut& v) {
+    v.user_address = j.value("user_address", "");
+    v.last_read_message_id = j.value("last_read_message_id", "");
+    v.last_read_sent_at_ms = j.value("last_read_sent_at_ms", 0LL);
+    v.updated_at = j.value("updated_at", "");
+}
+
+inline void to_json(nlohmann::json& j, const ConversationReadStateOut& v) {
+    j = nlohmann::json{
+        {"conversation_id", v.conversation_id},
+        {"cursors", v.cursors},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, ConversationReadStateOut& v) {
+    v.conversation_id = j.value("conversation_id", "");
+    v.cursors = j.value("cursors", std::vector<ConversationReadCursorEntryOut>{});
+}
+
+inline void to_json(nlohmann::json& j, const SystemVersionOut& v) {
+    j = nlohmann::json{
+        {"server_version", v.server_version},
+        {"api_version", v.api_version},
+        {"git_commit", v.git_commit},
+        {"build_timestamp", v.build_timestamp},
+    };
+}
+
+inline void from_json(const nlohmann::json& j, SystemVersionOut& v) {
+    v.server_version = j.value("server_version", "");
+    v.api_version = j.value("api_version", "v2");
+    v.git_commit = j.value("git_commit", "");
+    v.build_timestamp = j.value("build_timestamp", "");
+}
+
 inline void from_json(const nlohmann::json& j, WsEventMessageNew& v) {
     v.copy_id = j.value("copy_id", "");
     j.at("message").get_to(v.message);
@@ -1342,6 +1498,22 @@ inline void from_json(const nlohmann::json& j, WsEventGroupRenamed& v) {
     v.group_name = j.value("group_name", "");
     v.actor_address = j.value("actor_address", "");
     v.event_seq = j.value("event_seq", 0);
+}
+
+inline void from_json(const nlohmann::json& j, WsEventConversationTyping& v) {
+    v.conversation_id = j.value("conversation_id", "");
+    v.from_user_address = j.value("from_user_address", "");
+    v.state = j.value("state", "off");
+    v.expires_in_ms = j.value("expires_in_ms", 0);
+    v.sent_at = j.value("sent_at", "");
+}
+
+inline void from_json(const nlohmann::json& j, WsEventConversationRead& v) {
+    v.conversation_id = j.value("conversation_id", "");
+    v.reader_user_address = j.value("reader_user_address", "");
+    v.last_read_message_id = j.value("last_read_message_id", "");
+    v.last_read_sent_at_ms = j.value("last_read_sent_at_ms", 0LL);
+    v.updated_at = j.value("updated_at", "");
 }
 
 }  // namespace blackwire

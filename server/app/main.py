@@ -15,6 +15,7 @@ from app.api_v2 import (
     keys as keys_v2,
     messages as messages_v2,
     presence as presence_v2,
+    system as system_v2,
     users as users_v2,
     ws as ws_v2,
 )
@@ -34,12 +35,14 @@ from app.services.federation_outbox_service import federation_outbox_service
 from app.services.message_service import message_service
 from app.services.message_service_v2 import message_service_v2
 from app.services.queue_worker import queue_cleanup_worker
+from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.rate_limit import rate_limiter
 from app.services.server_identity import (
     get_server_onion,
     get_server_onion_source,
     initialize_server_identity,
 )
+from app.services.typing_service_v2 import typing_service_v2
 from app.ws.manager import connection_manager
 
 logger = logging.getLogger("blackwire.app")
@@ -89,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations_v2.router)
     app.include_router(messages_v2.router)
     app.include_router(federation_v2.router)
+    app.include_router(system_v2.router)
 
     @app.on_event("startup")
     async def on_startup() -> None:
@@ -109,6 +113,8 @@ def create_app() -> FastAPI:
                 raise RuntimeError("BLACKWIRE_WEBRTC_ICE_SERVERS_JSON must be a non-empty JSON array")
 
         initialize_server_identity(settings)
+        typing_service_v2.settings = settings
+        read_state_service_v2.settings = settings
         server_onion = get_server_onion()
         onion_source = get_server_onion_source()
         logger.info(

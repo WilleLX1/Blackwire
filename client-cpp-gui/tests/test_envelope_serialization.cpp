@@ -108,3 +108,51 @@ TEST(EnvelopeSerializationTest, ConversationMemberOutParsesNullableFields) {
     EXPECT_TRUE(member.joined_at.empty());
     EXPECT_TRUE(member.left_at.empty());
 }
+
+TEST(EnvelopeSerializationTest, ConversationTypingResponseParsesV03bFields) {
+    const auto json = nlohmann::json::parse(R"({"ok":true,"expires_in_ms":6000})");
+    const auto response = json.get<blackwire::ConversationTypingResponse>();
+    EXPECT_TRUE(response.ok);
+    EXPECT_EQ(response.expires_in_ms, 6000);
+}
+
+TEST(EnvelopeSerializationTest, ConversationReadStateParsesCursorList) {
+    const auto json = nlohmann::json::parse(
+        R"({"conversation_id":"conv-1","cursors":[{"user_address":"alice@local.invalid","last_read_message_id":"msg-123","last_read_sent_at_ms":42,"updated_at":"2026-03-01T10:00:00Z"}]})");
+    const auto state = json.get<blackwire::ConversationReadStateOut>();
+    ASSERT_EQ(state.cursors.size(), 1U);
+    EXPECT_EQ(state.conversation_id, "conv-1");
+    EXPECT_EQ(state.cursors.front().user_address, "alice@local.invalid");
+    EXPECT_EQ(state.cursors.front().last_read_message_id, "msg-123");
+    EXPECT_EQ(state.cursors.front().last_read_sent_at_ms, 42);
+}
+
+TEST(EnvelopeSerializationTest, SystemVersionParsesServerAndBuildInfo) {
+    const auto json = nlohmann::json::parse(
+        R"({"server_version":"0.3.0","api_version":"v2","git_commit":"abc1234","build_timestamp":"2026-03-01T00:00:00Z"})");
+    const auto version = json.get<blackwire::SystemVersionOut>();
+    EXPECT_EQ(version.server_version, "0.3.0");
+    EXPECT_EQ(version.api_version, "v2");
+    EXPECT_EQ(version.git_commit, "abc1234");
+    EXPECT_EQ(version.build_timestamp, "2026-03-01T00:00:00Z");
+}
+
+TEST(EnvelopeSerializationTest, ConversationTypingWsEventParses) {
+    const auto json = nlohmann::json::parse(
+        R"({"type":"conversation.typing","conversation_id":"conv-1","from_user_address":"bob@local.invalid","state":"on","expires_in_ms":6000,"sent_at":"2026-03-01T10:00:00Z"})");
+    const auto event = json.get<blackwire::WsEventConversationTyping>();
+    EXPECT_EQ(event.conversation_id, "conv-1");
+    EXPECT_EQ(event.from_user_address, "bob@local.invalid");
+    EXPECT_EQ(event.state, "on");
+    EXPECT_EQ(event.expires_in_ms, 6000);
+}
+
+TEST(EnvelopeSerializationTest, ConversationReadWsEventParses) {
+    const auto json = nlohmann::json::parse(
+        R"({"type":"conversation.read","conversation_id":"conv-1","reader_user_address":"bob@local.invalid","last_read_message_id":"msg-123","last_read_sent_at_ms":42,"updated_at":"2026-03-01T10:00:00Z"})");
+    const auto event = json.get<blackwire::WsEventConversationRead>();
+    EXPECT_EQ(event.conversation_id, "conv-1");
+    EXPECT_EQ(event.reader_user_address, "bob@local.invalid");
+    EXPECT_EQ(event.last_read_message_id, "msg-123");
+    EXPECT_EQ(event.last_read_sent_at_ms, 42);
+}

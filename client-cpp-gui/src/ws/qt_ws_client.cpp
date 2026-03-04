@@ -140,6 +140,8 @@ void QtWsClient::SetHandlers(
     CallWebRtcAnswerHandler on_call_webrtc_answer,
     CallWebRtcIceHandler on_call_webrtc_ice,
     GroupRenamedHandler on_group_renamed,
+    ConversationTypingHandler on_conversation_typing,
+    ConversationReadHandler on_conversation_read,
     ErrorHandler on_error,
     StatusHandler on_status) {
     on_message_ = std::move(on_message);
@@ -156,6 +158,8 @@ void QtWsClient::SetHandlers(
     on_call_webrtc_answer_ = std::move(on_call_webrtc_answer);
     on_call_webrtc_ice_ = std::move(on_call_webrtc_ice);
     on_group_renamed_ = std::move(on_group_renamed);
+    on_conversation_typing_ = std::move(on_conversation_typing);
+    on_conversation_read_ = std::move(on_conversation_read);
     on_error_ = std::move(on_error);
     on_status_ = std::move(on_status);
 }
@@ -338,6 +342,22 @@ void QtWsClient::HandleTextMessage(const QString& message_text) {
             WsEventGroupRenamed event = payload.get<WsEventGroupRenamed>();
             if (on_group_renamed_) {
                 on_group_renamed_(event);
+            }
+            return;
+        }
+
+        if (type == "conversation.typing") {
+            WsEventConversationTyping event = payload.get<WsEventConversationTyping>();
+            if (on_conversation_typing_) {
+                on_conversation_typing_(event);
+            }
+            return;
+        }
+
+        if (type == "conversation.read") {
+            WsEventConversationRead event = payload.get<WsEventConversationRead>();
+            if (on_conversation_read_) {
+                on_conversation_read_(event);
             }
             return;
         }

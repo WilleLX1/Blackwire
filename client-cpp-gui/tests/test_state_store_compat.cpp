@@ -130,3 +130,71 @@ TEST(StateCompatTest, ConversationMetaPeerAddressRoundTrip) {
     EXPECT_EQ(restored.peer_username, "alice");
     EXPECT_EQ(restored.peer_address, "alice@peer.onion");
 }
+
+TEST(StateCompatTest, LoadsLegacyLocalMessageWithoutAttachmentFields) {
+    const auto json = nlohmann::json::parse(
+        R"({"id":"m4","conversation_id":"c4","sender_user_id":"u4","created_at":"2026-03-01T09:00:00Z","rendered_text":"[2026] Peer: file"})");
+
+    const auto message = json.get<blackwire::LocalMessage>();
+    EXPECT_TRUE(message.attachment_name.empty());
+    EXPECT_TRUE(message.attachment_mime_type.empty());
+    EXPECT_TRUE(message.attachment_media_kind.empty());
+    EXPECT_EQ(message.attachment_status, "success");
+    EXPECT_TRUE(message.retry_payload.empty());
+}
+
+TEST(StateCompatTest, LoadsLocalMessageWithNullOptionalFields) {
+    // Reproduces the crash: to_json writes null for empty optional strings,
+    // but from_json used j.value() which throws type_error.302 on null.
+    const auto json = nlohmann::json::parse(
+        R"({"id":"m6","conversation_id":"c6","sender_user_id":"u6",
+            "sender_address":null,"created_at":"2026-03-01T10:00:00Z",
+            "sent_at_ms":0,"rendered_text":"[encrypted]",
+            "plaintext_cache_b64":null,"attachment_name":null,
+            "attachment_mime_type":null,"attachment_media_kind":null,
+            "attachment_status":"success","retry_payload":null})");
+
+    const auto message = json.get<blackwire::LocalMessage>();
+    EXPECT_EQ(message.id, "m6");
+    EXPECT_TRUE(message.sender_address.empty());
+    EXPECT_TRUE(message.plaintext_cache_b64.empty());
+    EXPECT_TRUE(message.attachment_name.empty());
+    EXPECT_TRUE(message.attachment_mime_type.empty());
+    EXPECT_TRUE(message.attachment_media_kind.empty());
+    EXPECT_TRUE(message.retry_payload.empty());
+}
+
+TEST(StateCompatTest, SaveMessageCacheDefaultsToTrue) {
+    const auto json = nlohmann::json::parse(
+        R"({"base_url":"http://localhost:8000","has_user":false,"has_device":false,"conversations":[]})");
+
+    const auto state = json.get<blackwire::ClientState>();
+    EXPECT_TRUE(state.social_preferences.save_message_cache);
+}
+
+TEST(StateCompatTest, PersistsAttachmentMetadataAndRetryPayloadRoundTrip) {
+    blackwire::LocalMessage message;
+    message.id = "m5";
+    message.conversation_id = "c5";
+    message.sender_user_id = "u5";
+    message.created_at = "2026-03-01T09:15:00Z";
+    message.attachment_name = "photo.jpg";
+    message.attachment_mime_type = "image/jpeg";
+    message.attachment_media_kind = "image";
+    message.attachment_status = "failed";
+    message.retry_payload = R"({"conversation_id":"c5","file_path":"C:\\tmp\\photo.jpg"})";
+
+    const nlohmann::json json = message;
+    EXPECT_EQ(json.at("attachment_name").get<std::string>(), "photo.jpg");
+    EXPECT_EQ(json.at("attachment_mime_type").get<std::string>(), "image/jpeg");
+    EXPECT_EQ(json.at("attachment_media_kind").get<std::string>(), "image");
+    EXPECT_EQ(json.at("attachment_status").get<std::string>(), "failed");
+    EXPECT_EQ(json.at("retry_payload").get<std::string>(), R"({"conversation_id":"c5","file_path":"C:\\tmp\\photo.jpg"})");
+
+    const auto restored = json.get<blackwire::LocalMessage>();
+    EXPECT_EQ(restored.attachment_name, "photo.jpg");
+    EXPECT_EQ(restored.attachment_mime_type, "image/jpeg");
+    EXPECT_EQ(restored.attachment_media_kind, "image");
+    EXPECT_EQ(restored.attachment_status, "failed");
+    EXPECT_EQ(restored.retry_payload, R"({"conversation_id":"c5","file_path":"C:\\tmp\\photo.jpg"})");
+}

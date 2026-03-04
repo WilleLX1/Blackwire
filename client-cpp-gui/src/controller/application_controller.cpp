@@ -14,6 +14,8 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
+#include <QMimeDatabase>
 #include <QTimer>
 #include <QStringList>
 #include <QUuid>
@@ -76,6 +78,68 @@ QString UsernameFromAddress(const QString& actor_address) {
         return normalized.left(at).trimmed();
     }
     return normalized;
+}
+
+QString ClientVersionString() {
+    const char* version = "0.3.0";
+#ifdef BLACKWIRE_CLIENT_VERSION
+    version = BLACKWIRE_CLIENT_VERSION;
+#endif
+    return QString::fromUtf8(version);
+}
+
+QString MediaKindFromMime(const QString& mime_type) {
+    const QString normalized = mime_type.trimmed().toLower();
+    if (normalized.startsWith("image/")) {
+        return "image";
+    }
+    if (normalized.startsWith("video/")) {
+        return "video";
+    }
+    return "file";
+}
+
+bool ParseAttachmentEnvelope(
+    const QString& marker_body,
+    QString* name,
+    QString* mime_type,
+    QString* media_kind) {
+    if (!marker_body.startsWith(kFileMessagePrefix, Qt::CaseInsensitive)) {
+        return false;
+    }
+    const QString encoded = marker_body.mid(static_cast<int>(strlen(kFileMessagePrefix))).trimmed();
+    if (encoded.isEmpty()) {
+        return false;
+    }
+    const QByteArray decoded_json = QByteArray::fromBase64(encoded.toUtf8());
+    if (decoded_json.isEmpty()) {
+        return false;
+    }
+    QJsonParseError parse_error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(decoded_json, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+    const QJsonObject obj = doc.object();
+    const QString parsed_name = obj.value("name").toString().trimmed();
+    if (parsed_name.isEmpty()) {
+        return false;
+    }
+    QString parsed_mime = obj.value("mime_type").toString().trimmed().toLower();
+    QString parsed_kind = obj.value("media_kind").toString().trimmed().toLower();
+    if (parsed_kind.isEmpty()) {
+        parsed_kind = MediaKindFromMime(parsed_mime);
+    }
+    if (name != nullptr) {
+        *name = parsed_name;
+    }
+    if (mime_type != nullptr) {
+        *mime_type = parsed_mime;
+    }
+    if (media_kind != nullptr) {
+        *media_kind = parsed_kind;
+    }
+    return true;
 }
 
 std::string CanonicalMessageSignature(
@@ -150,6 +214,7 @@ ApplicationController::ApplicationController(
     qRegisterMetaType<CallStateView>("blackwire::CallStateView");
     qRegisterMetaType<ThreadMessageView>("blackwire::ThreadMessageView");
     qRegisterMetaType<std::vector<ThreadMessageView>>("std::vector<blackwire::ThreadMessageView>");
+    client_version_ = ClientVersionString();
 
     presence_poll_timer_ = new QTimer(this);
     presence_poll_timer_->setInterval(5000);
@@ -160,6 +225,11 @@ ApplicationController::ApplicationController(
         LoadConversations();
     });
     presence_poll_timer_->start();
+
+    typing_expiry_timer_ = new QTimer(this);
+    typing_expiry_timer_->setInterval(1000);
+    connect(typing_expiry_timer_, &QTimer::timeout, this, [this]() { PruneExpiredTypingIndicators(); });
+    typing_expiry_timer_->start();
 
     ws_client_.SetHandlers(
         [this](const WsEventMessageNew& event) {
@@ -256,8 +326,25 @@ ApplicationController::ApplicationController(
                 local.sender_user_id = msg.sender_user_id;
                 local.sender_address = msg.sender_address;
                 local.created_at = msg.created_at;
+                local.sent_at_ms = msg.sent_at_ms;
                 local.rendered_text = RenderMessage(msg, plaintext).toStdString();
                 local.plaintext = plaintext;
+                local.attachment_status = "success";
+                local.retry_payload.clear();
+                {
+                    QString attachment_name;
+                    QString attachment_mime_type;
+                    QString attachment_media_kind;
+                    if (ParseAttachmentEnvelope(
+                            QString::fromStdString(plaintext),
+                            &attachment_name,
+                            &attachment_mime_type,
+                            &attachment_media_kind)) {
+                        local.attachment_name = attachment_name.toStdString();
+                        local.attachment_mime_type = attachment_mime_type.toStdString();
+                        local.attachment_media_kind = attachment_media_kind.toStdString();
+                    }
+                }
                 if (state_.dismissed_conversation_ids.contains(msg.conversation_id)) {
                     state_.dismissed_conversation_ids.erase(msg.conversation_id);
                 }
@@ -329,6 +416,7 @@ ApplicationController::ApplicationController(
 
                 const auto thread = RenderThread(msg.conversation_id);
                 if (selected_conversation_id_ == msg.conversation_id) {
+                    PublishReadCursorForConversation(msg.conversation_id);
                     emit ConversationSelected(
                         QString::fromStdString(msg.conversation_id),
                         thread);
@@ -828,6 +916,54 @@ ApplicationController::ApplicationController(
                 emit ConversationSelected(conversation_id, RenderThread(selected_conversation_id_));
             }
         },
+        [this](const WsEventConversationTyping& event) {
+            const std::string conversation_id = event.conversation_id;
+            if (conversation_id.empty()) {
+                return;
+            }
+            const QString from_address = QString::fromStdString(event.from_user_address).trimmed().toLower();
+            const QString self_address = UserDisplayId().trimmed().toLower();
+            if (!from_address.isEmpty() && from_address == self_address) {
+                return;
+            }
+
+            const QString state = QString::fromStdString(event.state).trimmed().toLower();
+            auto& by_sender = typing_expiry_ms_by_conversation_[conversation_id];
+            if (state == "off") {
+                if (!from_address.isEmpty()) {
+                    by_sender.erase(from_address.toStdString());
+                }
+            } else {
+                const int ttl_ms = std::max(1000, event.expires_in_ms);
+                by_sender[from_address.toStdString()] = QDateTime::currentMSecsSinceEpoch() + ttl_ms;
+            }
+            if (by_sender.empty()) {
+                typing_expiry_ms_by_conversation_.erase(conversation_id);
+            }
+
+            if (selected_conversation_id_ == conversation_id) {
+                emit TypingIndicatorChanged(
+                    QString::fromStdString(conversation_id),
+                    BuildTypingIndicatorText(conversation_id));
+            }
+        },
+        [this](const WsEventConversationRead& event) {
+            const std::string conversation_id = event.conversation_id;
+            if (conversation_id.empty()) {
+                return;
+            }
+            MergeReadCursor(
+                conversation_id,
+                QString::fromStdString(event.reader_user_address),
+                QString::fromStdString(event.last_read_message_id),
+                event.last_read_sent_at_ms,
+                QString::fromStdString(event.updated_at));
+            if (selected_conversation_id_ == conversation_id) {
+                emit ConversationSelected(
+                    QString::fromStdString(conversation_id),
+                    RenderThread(conversation_id));
+            }
+        },
         [this](const std::string& error) {
             if (IsWebSocketAuthError(error)) {
                 ReauthenticateWebSocket();
@@ -881,6 +1017,7 @@ void ApplicationController::Initialize() {
         if (state_.has_user && state_.has_device) {
             LoadConversations();
             StartRealtime();
+            LoadSystemVersion();
             SetPresenceStatus(preferred_presence_status);
         }
     } catch (const std::exception& ex) {
@@ -991,6 +1128,7 @@ void ApplicationController::Login(const QString& username, const QString& passwo
                 PersistState();
                 LoadConversations();
                 StartRealtime();
+                LoadSystemVersion();
                 SetPresenceStatus(preferred_presence_status);
             } catch (const std::exception& ex) {
                 const QString line = QString("Device re-bind failed: %1").arg(ex.what());
@@ -1084,6 +1222,7 @@ void ApplicationController::SetupDevice(const QString& label) {
 
         LoadConversations();
         StartRealtime();
+        LoadSystemVersion();
         SetPresenceStatus(preferred_presence_status);
     } catch (const std::exception& ex) {
         const QString line = QString("Device setup failed: %1").arg(ex.what());
@@ -1348,6 +1487,29 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                         existing->second.sender_address = self_address.toStdString();
                     }
                 }
+                if (existing->second.sent_at_ms <= 0) {
+                    existing->second.sent_at_ms = message.sent_at_ms;
+                }
+                if (existing->second.attachment_status.empty()) {
+                    existing->second.attachment_status = "success";
+                }
+                if (existing->second.attachment_name.empty()) {
+                    const QString plaintext_value = existing->second.plaintext.empty()
+                                                        ? QString::fromStdString(existing->second.rendered_text)
+                                                        : QString::fromStdString(existing->second.plaintext);
+                    QString attachment_name;
+                    QString attachment_mime_type;
+                    QString attachment_media_kind;
+                    if (ParseAttachmentEnvelope(
+                            plaintext_value,
+                            &attachment_name,
+                            &attachment_mime_type,
+                            &attachment_media_kind)) {
+                        existing->second.attachment_name = attachment_name.toStdString();
+                        existing->second.attachment_mime_type = attachment_mime_type.toStdString();
+                        existing->second.attachment_media_kind = attachment_media_kind.toStdString();
+                    }
+                }
                 rebuilt.push_back(existing->second);
                 rebuilt_ids.insert(existing->second.id);
                 state_.MarkMessageSeen(message.id);
@@ -1375,8 +1537,25 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                                        ? self_address.toStdString()
                                        : message.sender_address;
             local.created_at = message.created_at;
+            local.sent_at_ms = message.sent_at_ms;
             local.rendered_text = RenderMessage(message, plaintext).toStdString();
             local.plaintext = plaintext;
+            local.attachment_status = "success";
+            local.retry_payload.clear();
+            {
+                QString attachment_name;
+                QString attachment_mime_type;
+                QString attachment_media_kind;
+                if (ParseAttachmentEnvelope(
+                        QString::fromStdString(plaintext),
+                        &attachment_name,
+                        &attachment_mime_type,
+                        &attachment_media_kind)) {
+                    local.attachment_name = attachment_name.toStdString();
+                    local.attachment_mime_type = attachment_mime_type.toStdString();
+                    local.attachment_media_kind = attachment_media_kind.toStdString();
+                }
+            }
             rebuilt.push_back(local);
             rebuilt_ids.insert(local.id);
 
@@ -1388,18 +1567,19 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                 if (rebuilt_ids.contains(existing.id)) {
                     continue;
                 }
-                // Server listing is device-copy scoped and paginated, so preserve
-                // self/system/older-cached entries that are not in this window.
-                const bool self_sent = existing.sender_user_id == state_.user.id;
-                const bool local_system_entry = existing.sender_user_id.empty();
-                bool older_than_fetch_window = false;
-                if (oldest_remote_time.isValid()) {
-                    const QDateTime existing_time = parse_time(existing.created_at);
-                    older_than_fetch_window = existing_time.isValid() && existing_time < oldest_remote_time;
-                }
-                if (self_sent || local_system_entry || older_than_fetch_window) {
+                // Server listing is device-copy scoped and paginated.
+                // Preserve ALL locally-cached entries that the server did
+                // not return — this includes received messages that were
+                // delivered via WebSocket and may no longer appear in the
+                // server's paginated listing after acknowledgement.
+                {
                     LocalMessage carry = existing;
-                    if (carry.sender_address.empty()) {
+                    // Only backfill sender_address for real user messages.
+                    // System entries (call history etc.) must keep both
+                    // sender_user_id and sender_address empty so that
+                    // BuildThreadMessageViews marks them as system.
+                    const bool local_system_entry = existing.sender_user_id.empty();
+                    if (carry.sender_address.empty() && !local_system_entry) {
                         carry.sender_address = self_address.toStdString();
                     }
                     rebuilt.push_back(std::move(carry));
@@ -1419,6 +1599,33 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
         });
 
         state_.local_messages[selected_conversation_id_] = rebuilt;
+        if (EnvFlagEnabled("BLACKWIRE_ENABLE_READ_CURSOR_V03B", true)) {
+            try {
+                const auto read_state_op = [this]() {
+                    return api_client_.GetConversationReadState(
+                        state_.base_url,
+                        RequireAccessToken(),
+                        selected_conversation_id_);
+                };
+                const auto read_state = CallWithAuthRetryOnce<ConversationReadStateOut>(
+                    read_state_op,
+                    [this]() { RefreshAccessToken(); });
+                auto& cursor_map = read_cursors_by_conversation_[selected_conversation_id_];
+                cursor_map.clear();
+                for (const auto& cursor : read_state.cursors) {
+                    MergeReadCursor(
+                        selected_conversation_id_,
+                        QString::fromStdString(cursor.user_address),
+                        QString::fromStdString(cursor.last_read_message_id),
+                        cursor.last_read_sent_at_ms,
+                        QString::fromStdString(cursor.updated_at));
+                }
+            } catch (const ApiException& ex) {
+                if (ex.status_code() != 404) {
+                    throw;
+                }
+            }
+        }
         if (!rebuilt.empty()) {
             const auto& last = rebuilt.back();
             const QString preview = last.plaintext.empty()
@@ -1432,8 +1639,10 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
                 QString::fromStdString(last.created_at));
         }
 
+        PublishReadCursorForConversation(selected_conversation_id_);
         PersistState();
         RefreshConversationList();
+        emit TypingIndicatorChanged(conversation_id, BuildTypingIndicatorText(selected_conversation_id_));
         emit ConversationSelected(conversation_id, RenderThread(selected_conversation_id_));
     } catch (const std::exception& ex) {
         const QString line = QString("Select conversation failed: %1").arg(ex.what());
@@ -2197,9 +2406,32 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
         local.sender_user_id = state_.user.id;
         local.sender_address = self_address;
         local.created_at = sent.message.created_at;
+        local.sent_at_ms = sent.message.sent_at_ms;
         local.rendered_text = RenderMessage(sent.message, message_text.toStdString()).toStdString();
         local.plaintext = message_text.toStdString();
-        state_.local_messages[selected_conversation_id_].push_back(local);
+        local.attachment_status = "success";
+        local.retry_payload.clear();
+        {
+            QString attachment_name;
+            QString attachment_mime_type;
+            QString attachment_media_kind;
+            if (ParseAttachmentEnvelope(message_text, &attachment_name, &attachment_mime_type, &attachment_media_kind)) {
+                local.attachment_name = attachment_name.toStdString();
+                local.attachment_mime_type = attachment_mime_type.toStdString();
+                local.attachment_media_kind = attachment_media_kind.toStdString();
+            }
+        }
+        auto& thread_messages = state_.local_messages[selected_conversation_id_];
+        const std::string retry_payload = message_text.toStdString();
+        thread_messages.erase(
+            std::remove_if(
+                thread_messages.begin(),
+                thread_messages.end(),
+                [&retry_payload](const LocalMessage& item) {
+                    return item.attachment_status == "sending" && item.retry_payload == retry_payload;
+                }),
+            thread_messages.end());
+        thread_messages.push_back(local);
         state_.last_verified_chain_hash_by_conversation_sender[sender_chain_key] = sent.message.sender_chain_hash;
         if (resolved_conversation_id != conversation_id) {
             const std::string canonical_chain_key = resolved_conversation_id + "|" + state_.device.id;
@@ -2231,6 +2463,7 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
 
         PersistState();
         RefreshConversationList();
+        PublishReadCursorForConversation(selected_conversation_id_);
         emit MessageSendSucceeded(
             QString::fromStdString(selected_conversation_id_),
             QString::fromStdString(sent.message.id));
@@ -2240,6 +2473,45 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
     } catch (const std::exception& ex) {
         const QString line = QString("Send message failed: %1").arg(ex.what());
         RecordDiagnostic(line);
+        if (message_text.startsWith(kFileMessagePrefix, Qt::CaseInsensitive) && !selected_conversation_id_.empty()) {
+            const std::string retry_payload = message_text.toStdString();
+            auto& thread_messages = state_.local_messages[selected_conversation_id_];
+            auto pending_it = std::find_if(
+                thread_messages.begin(),
+                thread_messages.end(),
+                [&retry_payload](const LocalMessage& item) {
+                    return item.attachment_status == "sending" && item.retry_payload == retry_payload;
+                });
+            if (pending_it != thread_messages.end()) {
+                pending_it->attachment_status = "failed";
+            } else {
+                LocalMessage failed;
+                failed.id = QString("local-failed-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)).toStdString();
+                failed.conversation_id = selected_conversation_id_;
+                failed.sender_user_id = state_.user.id;
+                failed.sender_address = UserDisplayId().toStdString();
+                failed.created_at = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+                failed.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
+                failed.rendered_text = message_text.toStdString();
+                failed.plaintext = message_text.toStdString();
+                failed.attachment_status = "failed";
+                failed.retry_payload = retry_payload;
+                QString attachment_name;
+                QString attachment_mime_type;
+                QString attachment_media_kind;
+                if (ParseAttachmentEnvelope(message_text, &attachment_name, &attachment_mime_type, &attachment_media_kind)) {
+                    failed.attachment_name = attachment_name.toStdString();
+                    failed.attachment_mime_type = attachment_mime_type.toStdString();
+                    failed.attachment_media_kind = attachment_media_kind.toStdString();
+                }
+                thread_messages.push_back(std::move(failed));
+            }
+            PersistState();
+            RefreshConversationList();
+            emit ConversationSelected(
+                QString::fromStdString(selected_conversation_id_),
+                RenderThread(selected_conversation_id_));
+        }
         emit ErrorOccurred(line);
     }
 }
@@ -2335,9 +2607,15 @@ void ApplicationController::SendFileToPeer(const QString& peer_username, const Q
     }
 
     const QFileInfo info(normalized_path);
+    const QMimeDatabase mime_db;
+    const QString mime_type = mime_db.mimeTypeForFile(info).name().trimmed().toLower();
     QJsonObject payload;
     payload.insert("name", info.fileName());
     payload.insert("size", static_cast<double>(bytes.size()));
+    payload.insert("mime_type", mime_type.isEmpty() ? "application/octet-stream" : mime_type);
+    payload.insert(
+        "media_kind",
+        MediaKindFromMime(mime_type.isEmpty() ? "application/octet-stream" : mime_type));
     payload.insert("data_b64", QString::fromLatin1(bytes.toBase64()));
     const QByteArray serialized = QJsonDocument(payload).toJson(QJsonDocument::Compact);
     const QString marker =
@@ -2352,6 +2630,28 @@ void ApplicationController::SendFileToPeer(const QString& peer_username, const Q
             QString("Encrypted file envelope exceeds ciphertext policy (%1 max, source: %2).")
                 .arg(FormatBytesHuman(max_ciphertext_bytes), source_label));
         return;
+    }
+
+    if (!selected_conversation_id_.empty()) {
+        LocalMessage pending;
+        pending.id = QString("local-attachment-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)).toStdString();
+        pending.conversation_id = selected_conversation_id_;
+        pending.sender_user_id = state_.user.id;
+        pending.sender_address = UserDisplayId().toStdString();
+        pending.created_at = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+        pending.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
+        pending.rendered_text = marker.toStdString();
+        pending.plaintext = marker.toStdString();
+        pending.attachment_name = info.fileName().toStdString();
+        pending.attachment_mime_type = mime_type.toStdString();
+        pending.attachment_media_kind = MediaKindFromMime(mime_type).toStdString();
+        pending.attachment_status = "sending";
+        pending.retry_payload = marker.toStdString();
+        state_.local_messages[selected_conversation_id_].push_back(std::move(pending));
+        PersistState();
+        emit ConversationSelected(
+            QString::fromStdString(selected_conversation_id_),
+            RenderThread(selected_conversation_id_));
     }
 
     SendMessageToPeer(selected_group_conversation ? QString() : normalized_peer, marker);
@@ -2639,6 +2939,18 @@ bool ApplicationController::AcceptMessagesFromStrangers() const {
     return state_.social_preferences.accept_messages_from_strangers;
 }
 
+bool ApplicationController::SaveMessageCache() const {
+    return state_.social_preferences.save_message_cache;
+}
+
+void ApplicationController::SetSaveMessageCache(bool enabled) {
+    if (state_.social_preferences.save_message_cache == enabled) {
+        return;
+    }
+    state_.social_preferences.save_message_cache = enabled;
+    PersistState();
+}
+
 void ApplicationController::SetAcceptMessagesFromStrangers(bool enabled) {
     if (state_.social_preferences.accept_messages_from_strangers == enabled) {
         return;
@@ -2683,6 +2995,114 @@ void ApplicationController::IgnoreMessageRequest(const QString& conversation_id)
 
     PersistState();
     RefreshConversationList();
+}
+
+void ApplicationController::PublishTypingState(const QString& conversation_id, bool typing) {
+    const std::string key = conversation_id.trimmed().toStdString();
+    if (key.empty() || !state_.has_user || !state_.has_device) {
+        return;
+    }
+    if (!EnvFlagEnabled("BLACKWIRE_ENABLE_TYPING_V03B", true)) {
+        return;
+    }
+    const bool previous = local_typing_state_by_conversation_[key];
+    if (previous == typing) {
+        return;
+    }
+    local_typing_state_by_conversation_[key] = typing;
+
+    try {
+        ConversationTypingRequest request;
+        request.state = typing ? "on" : "off";
+        request.client_ts_ms = QDateTime::currentMSecsSinceEpoch();
+        const auto op = [this, &key, &request]() {
+            return api_client_.SendConversationTyping(
+                state_.base_url,
+                RequireAccessToken(),
+                key,
+                request);
+        };
+        (void)CallWithAuthRetryOnce<ConversationTypingResponse>(op, [this]() { RefreshAccessToken(); });
+    } catch (const ApiException& ex) {
+        if (ex.status_code() == 404) {
+            return;
+        }
+        RecordDiagnostic(QString("typing publish failed: %1").arg(QString::fromStdString(ex.what())));
+    } catch (const std::exception& ex) {
+        RecordDiagnostic(QString("typing publish failed: %1").arg(ex.what()));
+    }
+}
+
+void ApplicationController::RetryFailedAttachment(const QString& message_id) {
+    const std::string local_id = message_id.trimmed().toStdString();
+    if (local_id.empty() || selected_conversation_id_.empty()) {
+        return;
+    }
+    auto messages_it = state_.local_messages.find(selected_conversation_id_);
+    if (messages_it == state_.local_messages.end()) {
+        return;
+    }
+
+    std::string retry_payload;
+    LocalMessage retry_template;
+    bool found = false;
+    for (const auto& message : messages_it->second) {
+        if (message.id != local_id) {
+            continue;
+        }
+        if (message.retry_payload.empty()) {
+            return;
+        }
+        retry_payload = message.retry_payload;
+        retry_template = message;
+        found = true;
+        break;
+    }
+    if (!found || retry_payload.empty()) {
+        return;
+    }
+
+    messages_it->second.erase(
+        std::remove_if(
+            messages_it->second.begin(),
+            messages_it->second.end(),
+            [&local_id](const LocalMessage& message) { return message.id == local_id; }),
+        messages_it->second.end());
+    retry_template.id = QString("local-attachment-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)).toStdString();
+    retry_template.created_at = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+    retry_template.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
+    retry_template.attachment_status = "sending";
+    retry_template.retry_payload = retry_payload;
+    messages_it->second.push_back(std::move(retry_template));
+    PersistState();
+    emit ConversationSelected(
+        QString::fromStdString(selected_conversation_id_),
+        RenderThread(selected_conversation_id_));
+
+    SendMessageToPeer(QString(), QString::fromStdString(retry_payload));
+}
+
+void ApplicationController::LoadSystemVersion() {
+    if (!state_.has_user || !state_.has_device) {
+        server_version_ = "unknown";
+        return;
+    }
+    try {
+        const auto op = [this]() {
+            return api_client_.GetSystemVersion(state_.base_url, RequireAccessToken());
+        };
+        const auto response = CallWithAuthRetryOnce<SystemVersionOut>(op, [this]() { RefreshAccessToken(); });
+        server_version_ = QString::fromStdString(response.server_version).trimmed();
+        if (server_version_.isEmpty()) {
+            server_version_ = "unknown";
+        }
+        RecordDiagnostic(
+            QString("server_version=%1 git_commit=%2")
+                .arg(server_version_, QString::fromStdString(response.git_commit)));
+    } catch (const std::exception& ex) {
+        server_version_ = "unknown";
+        RecordDiagnostic(QString("system version fetch failed: %1").arg(ex.what()));
+    }
 }
 
 void ApplicationController::ResetLocalState() {
@@ -2758,13 +3178,18 @@ QString ApplicationController::ConnectionStatus() const {
     return connection_status_;
 }
 
+QString ApplicationController::ClientVersion() const {
+    return client_version_;
+}
+
+QString ApplicationController::ServerVersion() const {
+    return server_version_;
+}
+
 QString ApplicationController::DiagnosticsReport() const {
-    const char* version = "0.1.0";
-#ifdef BLACKWIRE_CLIENT_VERSION
-    version = BLACKWIRE_CLIENT_VERSION;
-#endif
     QStringList lines;
-    lines << QString("client_version=%1").arg(version);
+    lines << QString("client_version=%1").arg(client_version_);
+    lines << QString("server_version=%1").arg(server_version_);
     lines << QString("profile=%1").arg(QString::fromStdString(profile_name_));
     lines << QString("timestamp=%1").arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     lines << QString("base_url=%1").arg(BaseUrl());
@@ -2926,7 +3351,15 @@ void ApplicationController::DecryptPlaintextCacheInState() {
 
 void ApplicationController::PersistState() {
     EncryptPlaintextCacheInState();
-    state_store_.Save(state_);
+    if (!state_.social_preferences.save_message_cache) {
+        // User opted out of message caching; strip persisted message data.
+        // Runtime state_.local_messages is kept intact for the current session.
+        ClientState save_copy = state_;
+        save_copy.local_messages.clear();
+        state_store_.Save(save_copy);
+    } else {
+        state_store_.Save(state_);
+    }
 }
 
 QString ApplicationController::NormalizePresenceStatus(const QString& status) const {
@@ -3026,6 +3459,8 @@ void ApplicationController::RefreshPresenceCache() {
 void ApplicationController::RefreshConversationList() {
     std::vector<ConversationListItemView> items;
     items.reserve(state_.conversations.size());
+    const QString normalized_call_state = call_state_.state.trimmed().toLower();
+    const QString call_conversation_id = call_state_.conversation_id.trimmed();
 
     for (const auto& conv : state_.conversations) {
         if (state_.blocked_conversation_ids.contains(conv.id)) {
@@ -3052,6 +3487,17 @@ void ApplicationController::RefreshConversationList() {
             item.subtitle = QString::fromStdString(meta_it->second.last_preview);
         } else {
             item.subtitle = "(no messages yet)";
+        }
+        if (item.conversation_type == "group" &&
+            item.id == call_conversation_id &&
+            (normalized_call_state == "incoming_ringing" ||
+             normalized_call_state == "outgoing_ringing" ||
+             normalized_call_state == "active")) {
+            if (normalized_call_state == "active") {
+                item.subtitle = "Open call in progress - join from this group";
+            } else {
+                item.subtitle = "Open call available - click to join";
+            }
         }
 
         item.last_activity_at = LastActivityForConversation(conv.id);
@@ -3094,7 +3540,186 @@ std::vector<ThreadMessageView> ApplicationController::RenderThread(const std::st
         }
     }
 
-    return BuildThreadMessageViews(iter->second, state_.user.id, peer_label);
+    auto views = BuildThreadMessageViews(iter->second, state_.user.id, peer_label);
+    const QString self_address = UserDisplayId().trimmed().toLower();
+    long long max_other_read_sent_at_ms = 0;
+    const auto cursor_it = read_cursors_by_conversation_.find(conversation_id);
+    if (cursor_it != read_cursors_by_conversation_.end()) {
+        for (const auto& [address, cursor] : cursor_it->second) {
+            const QString normalized = QString::fromStdString(address).trimmed().toLower();
+            if (!self_address.isEmpty() && normalized == self_address) {
+                continue;
+            }
+            max_other_read_sent_at_ms = std::max(max_other_read_sent_at_ms, cursor.last_read_sent_at_ms);
+        }
+    }
+    for (auto& view : views) {
+        if (!view.outgoing) {
+            view.delivery_badge.clear();
+            continue;
+        }
+        if (view.attachment_status.trimmed().toLower() == "failed") {
+            view.delivery_badge = "Failed";
+            continue;
+        }
+        if (view.sent_at_ms > 0 && max_other_read_sent_at_ms >= view.sent_at_ms) {
+            view.delivery_badge = "Seen";
+        } else {
+            view.delivery_badge = "Sent";
+        }
+    }
+    return views;
+}
+
+QString ApplicationController::BuildTypingIndicatorText(const std::string& conversation_id) const {
+    const auto typing_it = typing_expiry_ms_by_conversation_.find(conversation_id);
+    if (typing_it == typing_expiry_ms_by_conversation_.end()) {
+        return {};
+    }
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    QStringList active_users;
+    for (const auto& [address, expiry_ms] : typing_it->second) {
+        if (expiry_ms <= now_ms) {
+            continue;
+        }
+        QString username = QString::fromStdString(address).trimmed();
+        if (username.contains('@')) {
+            username = username.section('@', 0, 0).trimmed();
+        }
+        if (username.isEmpty()) {
+            username = "Someone";
+        }
+        if (!active_users.contains(username)) {
+            active_users.push_back(username);
+        }
+    }
+    if (active_users.isEmpty()) {
+        return {};
+    }
+    if (active_users.size() == 1) {
+        return QString("%1 is typing...").arg(active_users.front());
+    }
+    if (active_users.size() == 2) {
+        return QString("%1 and %2 are typing...").arg(active_users[0], active_users[1]);
+    }
+    return "Several people are typing...";
+}
+
+void ApplicationController::PruneExpiredTypingIndicators() {
+    const qint64 now_ms = QDateTime::currentMSecsSinceEpoch();
+    bool selected_changed = false;
+    for (auto conv_it = typing_expiry_ms_by_conversation_.begin(); conv_it != typing_expiry_ms_by_conversation_.end();) {
+        auto& by_sender = conv_it->second;
+        for (auto sender_it = by_sender.begin(); sender_it != by_sender.end();) {
+            if (sender_it->second <= now_ms) {
+                sender_it = by_sender.erase(sender_it);
+            } else {
+                ++sender_it;
+            }
+        }
+        if (by_sender.empty()) {
+            if (selected_conversation_id_ == conv_it->first) {
+                selected_changed = true;
+            }
+            conv_it = typing_expiry_ms_by_conversation_.erase(conv_it);
+        } else {
+            ++conv_it;
+        }
+    }
+    if (selected_changed && !selected_conversation_id_.empty()) {
+        emit TypingIndicatorChanged(
+            QString::fromStdString(selected_conversation_id_),
+            BuildTypingIndicatorText(selected_conversation_id_));
+    }
+}
+
+bool ApplicationController::PublishReadCursorForConversation(const std::string& conversation_id) {
+    if (conversation_id.empty() || !state_.has_user || !state_.has_device) {
+        return false;
+    }
+    if (!EnvFlagEnabled("BLACKWIRE_ENABLE_READ_CURSOR_V03B", true)) {
+        return false;
+    }
+    const auto thread_it = state_.local_messages.find(conversation_id);
+    if (thread_it == state_.local_messages.end() || thread_it->second.empty()) {
+        return false;
+    }
+    const LocalMessage* latest = nullptr;
+    for (auto it = thread_it->second.rbegin(); it != thread_it->second.rend(); ++it) {
+        if (it->sent_at_ms > 0) {
+            latest = &(*it);
+            break;
+        }
+    }
+    if (latest == nullptr) {
+        return false;
+    }
+    const long long last_sent_at = latest->sent_at_ms;
+    const auto last_it = last_published_read_sent_at_by_conversation_.find(conversation_id);
+    if (last_it != last_published_read_sent_at_by_conversation_.end() && last_it->second >= last_sent_at) {
+        return false;
+    }
+
+    try {
+        ConversationReadRequest request;
+        request.last_read_message_id = latest->id;
+        request.last_read_sent_at_ms = last_sent_at;
+        const auto op = [this, &conversation_id, &request]() {
+            return api_client_.SendConversationRead(
+                state_.base_url,
+                RequireAccessToken(),
+                conversation_id,
+                request);
+        };
+        const auto cursor = CallWithAuthRetryOnce<ConversationReadCursorOut>(op, [this]() { RefreshAccessToken(); });
+        MergeReadCursor(
+            conversation_id,
+            QString::fromStdString(cursor.reader_user_address),
+            QString::fromStdString(cursor.last_read_message_id),
+            cursor.last_read_sent_at_ms,
+            QString::fromStdString(cursor.updated_at));
+        last_published_read_sent_at_by_conversation_[conversation_id] = cursor.last_read_sent_at_ms;
+        return true;
+    } catch (const ApiException& ex) {
+        if (ex.status_code() == 404) {
+            return false;
+        }
+        RecordDiagnostic(QString("read cursor publish failed: %1").arg(QString::fromStdString(ex.what())));
+        return false;
+    } catch (const std::exception& ex) {
+        RecordDiagnostic(QString("read cursor publish failed: %1").arg(ex.what()));
+        return false;
+    }
+}
+
+void ApplicationController::MergeReadCursor(
+    const std::string& conversation_id,
+    const QString& reader_user_address,
+    const QString& last_read_message_id,
+    long long last_read_sent_at_ms,
+    const QString& updated_at) {
+    if (conversation_id.empty()) {
+        return;
+    }
+    const QString normalized_reader = reader_user_address.trimmed().toLower();
+    if (normalized_reader.isEmpty()) {
+        return;
+    }
+
+    auto& by_reader = read_cursors_by_conversation_[conversation_id];
+    auto& state = by_reader[normalized_reader.toStdString()];
+    if (last_read_sent_at_ms < state.last_read_sent_at_ms) {
+        return;
+    }
+    state.last_read_message_id = last_read_message_id.trimmed();
+    state.last_read_sent_at_ms = last_read_sent_at_ms;
+    state.updated_at = updated_at.trimmed();
+
+    if (normalized_reader == UserDisplayId().trimmed().toLower()) {
+        last_published_read_sent_at_by_conversation_[conversation_id] = std::max(
+            last_published_read_sent_at_by_conversation_[conversation_id],
+            last_read_sent_at_ms);
+    }
 }
 
 std::optional<QString> ApplicationController::NormalizePeerUsername(const QString& value, QString* error) const {
@@ -3451,8 +4076,10 @@ void ApplicationController::AppendCallHistoryEntry(const QString& reason) {
     local.sender_user_id.clear();
     local.sender_address.clear();
     local.created_at = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+    local.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
     local.rendered_text = text.toStdString();
     local.plaintext = text.toStdString();
+    local.attachment_status = "success";
     state_.local_messages[conversation_id.toStdString()].push_back(local);
 
     UpsertConversationMeta(
@@ -3499,10 +4126,12 @@ void ApplicationController::AppendGroupRenameHistoryEntry(
     local.id = synthetic_id;
     local.conversation_id = conversation.toStdString();
     local.sender_user_id.clear();
-    local.sender_address = actor_address.trimmed().toLower().toStdString();
+    local.sender_address.clear();
     local.created_at = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs).toStdString();
+    local.sent_at_ms = QDateTime::currentMSecsSinceEpoch();
     local.rendered_text = text.toStdString();
     local.plaintext = text.toStdString();
+    local.attachment_status = "success";
     state_.local_messages[conversation.toStdString()].push_back(local);
 
     UpsertConversationMeta(
@@ -3580,6 +4209,7 @@ void ApplicationController::TransitionCallState(
     }
 
     EmitCallState();
+    RefreshConversationList();
 }
 
 bool ApplicationController::StartAudioEngineForActiveCall(QString* warning, QString* error) {
@@ -3807,10 +4437,15 @@ void ApplicationController::ClearInMemoryState() {
     peer_attachment_policy_cache_.clear();
     local_attachment_policy_cache_.reset();
     peer_presence_status_by_address_.clear();
+    read_cursors_by_conversation_.clear();
+    last_published_read_sent_at_by_conversation_.clear();
+    typing_expiry_ms_by_conversation_.clear();
+    local_typing_state_by_conversation_.clear();
     pending_request_messages_.clear();
     pending_request_senders_.clear();
     selected_conversation_id_.clear();
     connection_status_ = "Disconnected";
+    server_version_ = "unknown";
     user_presence_status_ = "active";
     call_state_ = CallStateView{};
     call_initiated_locally_ = false;

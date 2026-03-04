@@ -132,6 +132,14 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
         controller_.SendFileToPeer(QString(), file_path);
     });
 
+    connect(chat_widget_, &ChatWidget::RetryAttachmentRequested, this, [this](const QString& message_id) {
+        controller_.RetryFailedAttachment(message_id);
+    });
+
+    connect(chat_widget_, &ChatWidget::TypingStateChanged, this, [this](const QString& conversation_id, bool typing) {
+        controller_.PublishTypingState(conversation_id, typing);
+    });
+
     connect(chat_widget_, &ChatWidget::UserStatusChanged, this, [this](const QString& status) {
         controller_.SetPresenceStatus(status);
     });
@@ -159,13 +167,16 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
     connect(chat_widget_, &ChatWidget::SettingsRequested, this, [this]() {
         controller_.LoadAudioDevices();
         controller_.LoadAccountDevices();
+        controller_.LoadSystemVersion();
         settings_dialog_->SetIdentity(controller_.UserDisplayId());
         settings_dialog_->SetServerUrl(controller_.BaseUrl());
         settings_dialog_->SetDeviceInfo(controller_.DeviceLabel(), controller_.DeviceId());
+        settings_dialog_->SetVersionInfo(controller_.ClientVersion(), controller_.ServerVersion());
         settings_dialog_->SetConnectionStatus(controller_.ConnectionStatus());
         settings_dialog_->SetDiagnostics(controller_.DiagnosticsReport());
         settings_dialog_->SetIntegrityWarning(last_integrity_warning_);
         settings_dialog_->SetAcceptMessagesFromStrangers(controller_.AcceptMessagesFromStrangers());
+        settings_dialog_->SetSaveMessageCache(controller_.SaveMessageCache());
         settings_dialog_->exec();
     });
 
@@ -179,6 +190,10 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
 
     connect(settings_dialog_, &SettingsDialog::AcceptMessagesFromStrangersChanged, this, [this](bool enabled) {
         controller_.SetAcceptMessagesFromStrangers(enabled);
+    });
+
+    connect(settings_dialog_, &SettingsDialog::SaveMessageCacheChanged, this, [this](bool enabled) {
+        controller_.SetSaveMessageCache(enabled);
     });
 
     connect(settings_dialog_, &SettingsDialog::RevokeDeviceRequested, this, [this](const QString& device_uid) {
@@ -212,6 +227,7 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
                 last_integrity_warning_.clear();
                 settings_dialog_->SetIntegrityWarning(last_integrity_warning_);
                 settings_dialog_->SetAccountDevices(std::vector<DeviceOut>{}, QString());
+                settings_dialog_->SetVersionInfo(controller_.ClientVersion(), QString());
                 login_widget_->SetBaseUrl(controller_.BaseUrl());
                 stack->setCurrentWidget(login_widget_);
                 return;
@@ -240,6 +256,9 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
         [this](const QString& conversation_id, const std::vector<ThreadMessageView>& messages) {
             chat_widget_->SetSelectedConversation(conversation_id);
             chat_widget_->SetThreadMessages(messages);
+            if (conversation_id.trimmed().isEmpty()) {
+                chat_widget_->SetTypingIndicator(QString(), QString());
+            }
         });
 
     connect(
@@ -251,6 +270,17 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
                 return;
             }
             chat_widget_->AppendThreadMessage(message);
+        });
+
+    connect(
+        &controller_,
+        &ApplicationController::TypingIndicatorChanged,
+        this,
+        [this](const QString& conversation_id, const QString& text) {
+            if (conversation_id != chat_widget_->SelectedConversation()) {
+                return;
+            }
+            chat_widget_->SetTypingIndicator(conversation_id, text);
         });
 
     connect(

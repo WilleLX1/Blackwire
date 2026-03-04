@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(blackwire_client_cpp_gui VERSION 0.1.0 LANGUAGES CXX)
+project(blackwire_client_cpp_gui VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network WebSockets Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network WebSockets Multimedia MultimediaWidgets)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -76,6 +76,7 @@ target_link_libraries(blackwire_client PRIVATE
   Qt6::Network
   Qt6::WebSockets
   Qt6::Multimedia
+  Qt6::MultimediaWidgets
   nlohmann_json::nlohmann_json
   unofficial-sodium::sodium
   spdlog::spdlog
@@ -85,7 +86,7 @@ if (WIN32)
   target_link_libraries(blackwire_client PRIVATE Advapi32)
 endif()
 
-target_compile_definitions(blackwire_client PRIVATE BLACKWIRE_CLIENT_VERSION=\"0.1.0\")
+target_compile_definitions(blackwire_client PRIVATE BLACKWIRE_CLIENT_VERSION=\"${PROJECT_VERSION}\")
 
 include(CTest)
 if (BUILD_TESTING)

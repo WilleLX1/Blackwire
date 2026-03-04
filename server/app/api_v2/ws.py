@@ -297,7 +297,10 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
                     "detail": (
                         "Supported client events: "
                         "message.ack, call.offer, call.accept, call.reject, call.end, "
-                        "call.audio, call.webrtc.offer, call.webrtc.answer, call.webrtc.ice"
+                        "call.audio, call.webrtc.offer, call.webrtc.answer, call.webrtc.ice. "
+                        "Typing and read updates are write-only over REST via "
+                        "POST /api/v2/conversations/{conversation_id}/typing and "
+                        "POST /api/v2/conversations/{conversation_id}/read."
                     ),
                 }
             )
