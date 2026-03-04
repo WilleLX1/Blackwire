@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Blackwire v0.2 | Security-First Federated Messaging</title>
+  <title>Blackwire v0.3 | Security-First Federated Messaging</title>
   <meta
     name="description"
-    content="Blackwire v0.2 adds signed device envelopes, multi-device revoke, device-bound JWT auth, ratchet prekeys, and WebRTC migration."
+    content="Blackwire v0.3 delivers group messaging, typing indicators, read cursors, markdown rendering, inline media, and encrypted message cache."
   />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -422,14 +422,14 @@
   <main class="container">
     <section class="hero">
       <div>
-        <div class="eyebrow">v0.2 Release</div>
-        <h1>Device-bound trust and ratchet-ready federated messaging.</h1>
+        <div class="eyebrow">v0.3 Release</div>
+        <h1>Introducing Blackwire v0.3</h1>
         <p>
-          Blackwire v0.2 ships signed per-device envelopes, true multi-device accounts with revoke,
-          asymmetric device-bound JWT sessions, integrity chains, and staged ratchet/WebRTC rollout.
+          Blackwire v0.3 delivers real-time group messaging with end-to-end encryption, group conversations, typing indicators, read cursors, markdown rendering
+          with inline media, encrypted message cache with privacy control, and federated voice calls.
         </p>
         <div class="cta">
-          <a class="button primary" href="#quickstart">Run v0.2 Locally</a>
+          <a class="button primary" href="#quickstart">Run v0.3 Locally</a>
           <a class="button ghost" href="README.md">Read Full Docs</a>
         </div>
       </div>
@@ -438,74 +438,75 @@
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         </div>
         <pre>$ docker compose -f infra/docker-compose.yml up --build
-$env:BLACKWIRE_ENABLE_RATCHET_V2B1 = "true"
-$env:BLACKWIRE_ENABLE_WEBRTC_V2B2 = "true"
+# Qt GUI client with group DM/calls, typing, read cursors
+$ cd client-cpp-gui && ./scripts/run.ps1 -Config Release
 
-v2 auth: /api/v2/auth/login -> /api/v2/auth/bind-device
-v2 send: /api/v2/messages/send (sealedbox_v0_2a | ratchet_v0_2b1)
-v2 federation: /api/v2/federation/well-known
-v2 websocket: /api/v2/ws (Bearer auth)</pre>
+v0.3 group: /api/v2/conversations/group
+v0.3 typing: POST /api/v2/conversations/{id}/typing
+v0.3 read: POST /api/v2/conversations/{id}/read
+v0.3 system: GET /api/v2/system/version</pre>
       </article>
     </section>
 
     <section id="highlights" class="section">
       <div class="section-head">
-        <h2>v0.2 Highlights</h2>
+        <h2>v0.3 Wave 1 Features</h2>
         <p class="section-sub">
-          v0.2a security milestones are complete, with v0.2b ratchet and WebRTC paths delivered behind rollout gates.
+          Group conversations, typing indicators, read cursors, markdown rendering, encrypted message cache,
+          and enhanced client UX with federated voice calls over WebRTC.
         </p>
       </div>
       <div class="grid cards">
         <article class="card reveal">
-          <h3>Client-Signed Envelopes</h3>
-          <p>Outbound messages are signed per device, and receivers verify signatures before accept/decrypt.</p>
+          <h3>Group Conversations</h3>
+          <p>Create and manage group DMs with member management, typing indicators, and read receipts via <code>/api/v2</code>.</p>
         </article>
         <article class="card reveal">
-          <h3>Sender Key Pinning</h3>
-          <p>TOFU pinning by <code>sender_device_uid</code> raises integrity warnings on signing-key changes.</p>
+          <h3>Typing Indicators &amp; Read Cursors</h3>
+          <p>Real-time typing state and persistent conversation-level read cursors with federation relay support.</p>
         </article>
         <article class="card reveal">
-          <h3>Multi-Device + Revoke</h3>
-          <p>Accounts now support multiple active devices with immediate revoke/kick enforcement.</p>
+          <h3>Markdown + Inline Media</h3>
+          <p>CommonMark-compatible message rendering with raw HTML disabled. Inline images and click-to-play video dialogs.</p>
         </article>
         <article class="card reveal">
-          <h3>Device-Bound JWT Sessions</h3>
-          <p>Bootstrap-to-bind flow issues asymmetric tokens with device identity claims validated on every request.</p>
+          <h3>Encrypted Message Cache</h3>
+          <p>Optional local message cache with user privacy toggle: messages persist encrypted or cleared on restart.</p>
         </article>
         <article class="card reveal">
-          <h3>Integrity Chain Detection</h3>
-          <p>Signed chain fields detect gaps/reordering/tampering and surface explicit integrity warnings in UI.</p>
+          <h3>Attachment Lifecycle UX</h3>
+          <p>File send states (queued, sending, success, failed) with retry action for failed attachments in chat UI.</p>
         </article>
         <article class="card reveal">
-          <h3>Ratchet + WebRTC Rollout</h3>
-          <p>Prekey/X3DH + Double Ratchet and WebRTC signaling/media are wired through v2 dual-stack contracts.</p>
+          <h3>Version Visibility &amp; Link Safety</h3>
+          <p>Client/server version display in settings. External link confirmation dialogs prevent phishing clicks.</p>
         </article>
       </div>
     </section>
 
     <section id="architecture" class="section">
       <div class="section-head">
-        <h2>v0.2 Rollout Model</h2>
+        <h2>v0.3 Architecture</h2>
         <p class="section-sub">
-          Migration is incremental: v2 features run in parallel with v1 compatibility while ratchet and WebRTC move to default.
+          Federated group messaging with typing/read sync, encrypted local storage, and WebRTC voice on top of core v2 security.
         </p>
       </div>
       <div class="grid cards">
         <article class="card reveal">
-          <h3>Parallel API Surface</h3>
-          <p><code>/api/v2</code> is implemented without removing <code>/api/v1</code>, allowing staged client migration.</p>
+          <h3>Group Delivery</h3>
+          <p>Server-side fanning to group members with federation relay for remote members.</p>
         </article>
         <article class="card reveal">
-          <h3>Mode Negotiation</h3>
-          <p><code>encryption_mode</code> supports sealed-box fallback and ratchet mode with explicit policy gates.</p>
+          <h3>Ephemeral Typing State</h3>
+          <p>Typing events expire by TTL, are sender-excluded, and fan out via WebSocket and federation.</p>
         </article>
         <article class="card reveal">
-          <h3>Federation Trust Binding</h3>
-          <p>v2 federation well-known metadata binds trust to Tor onion identity while preserving signed relay controls.</p>
+          <h3>Persistent Read Cursors</h3>
+          <p>Monotonic per-conversation cursors with stale-update rejection and federation sync.</p>
         </article>
         <article class="card reveal">
-          <h3>Voice Transport Migration</h3>
-          <p>WebRTC signaling and media are added in v2 while legacy WS PCM can be disabled after stabilization.</p>
+          <h3>Client-Local Privacy</h3>
+          <p>Encrypted message cache on disk with AES-GCM, optional default-on, user can disable for privacy.</p>
         </article>
       </div>
     </section>
@@ -518,33 +519,20 @@ v2 websocket: /api/v2/ws (Bearer auth)</pre>
         </p>
       </div>
       <ul class="api-list reveal">
-        <li>POST /api/v2/auth/register</li>
-        <li>POST /api/v2/auth/login</li>
-        <li>POST /api/v2/auth/bind-device</li>
-        <li>POST /api/v2/auth/refresh</li>
-        <li>POST /api/v2/auth/logout</li>
-        <li>POST /api/v2/devices/register</li>
-        <li>GET /api/v2/devices</li>
-        <li>POST /api/v2/devices/{device_uid}/revoke</li>
-        <li>GET /api/v2/me</li>
-        <li>GET /api/v2/users/resolve-devices?peer_address=...</li>
-        <li>GET /api/v2/users/resolve-prekeys?peer_address=...</li>
-        <li>POST /api/v2/keys/prekeys/upload</li>
-        <li>POST /api/v2/messages/send</li>
-        <li>GET /api/v2/conversations</li>
-        <li>POST /api/v2/conversations/dm</li>
-        <li>GET /api/v2/conversations/{conversation_id}/messages</li>
-        <li>GET /api/v2/federation/well-known</li>
-        <li>GET /api/v2/federation/users/{username}/devices</li>
-        <li>GET /api/v2/federation/users/{username}/prekeys</li>
-        <li>POST /api/v2/federation/messages/relay</li>
-        <li>POST /api/v2/federation/calls/webrtc-offer</li>
-        <li>POST /api/v2/federation/calls/webrtc-answer</li>
-        <li>POST /api/v2/federation/calls/webrtc-ice</li>
-        <li>POST /api/v2/federation/group-calls/webrtc-offer</li>
-        <li>POST /api/v2/federation/group-calls/webrtc-answer</li>
-        <li>POST /api/v2/federation/group-calls/webrtc-ice</li>
-        <li>WS /api/v2/ws</li>
+        <li>Auth: POST /api/v2/auth/register|login|refresh|logout</li>
+        <li>Devices: GET|POST /api/v2/devices, POST .../revoke</li>
+        <li>Keys: POST /api/v2/keys/prekeys/upload</li>
+        <li>Messaging: POST /api/v2/messages/send</li>
+        <li>Conversations: GET /api/v2/conversations, POST .../dm, POST .../group</li>
+        <li>Typing: POST /api/v2/conversations/{id}/typing</li>
+        <li>Read Cursor: POST|GET /api/v2/conversations/{id}/read</li>
+        <li>System: GET /api/v2/system/version</li>
+        <li>Presence: POST /api/v2/presence/set|resolve</li>
+        <li>Federation typing: POST /api/v2/federation/conversations/typing</li>
+        <li>Federation read: POST /api/v2/federation/conversations/read</li>
+        <li>Federation relay: POST /api/v2/federation/messages/relay</li>
+        <li>Voice calls: WebRTC via federation /api/v2/federation/calls/*</li>
+        <li>WebSocket: WS /api/v2/ws (events: typing, read, messages)</li>
       </ul>
     </section>
 
@@ -562,30 +550,31 @@ v2 websocket: /api/v2/ws (Bearer auth)</pre>
           <code>./infra/randomize-env-secrets.ps1</code>
         </article>
         <article class="step reveal">
-          <h3>Enable v0.2b Flags</h3>
-          <code>BLACKWIRE_ENABLE_RATCHET_V2B1=true</code>
-          <code>BLACKWIRE_ENABLE_WEBRTC_V2B2=true</code>
-        </article>
-        <article class="step reveal">
-          <h3>Set Voice Mode</h3>
-          <code>BLACKWIRE_ENABLE_LEGACY_CALL_AUDIO_WS=false</code>
-          <code>BLACKWIRE_WEBRTC_ICE_SERVERS_JSON=[{"urls":"stun:stun.l.google.com:19302"}]</code>
-        </article>
-        <article class="step reveal">
-          <h3>Start + Verify v2</h3>
+          <h3>Start Server Stack</h3>
           <code>docker compose -f infra/docker-compose.yml up --build</code>
-          <code>http://localhost:8000/api/v2/federation/well-known</code>
+          <code>http://localhost:8000/docs</code>
+        </article>
+        <article class="step reveal">
+          <h3>Launch Qt Client</h3>
+          <code>cd client-cpp-gui && ./scripts/bootstrap-windows.ps1</code>
+          <code>./scripts/run.ps1 -Config Release</code>
+        </article>
+        <article class="step reveal">
+          <h3>Test v0.3 Features</h3>
+          <code>Create group DM, test typing/read indicators</code>
+          <code>Try message cache toggle in Settings → Data & Privacy</code>
         </article>
       </div>
       <div class="status reveal">
-        v0.2a security milestones are implemented; v0.2b ratchet/WebRTC paths are available with feature gates while /api/v1 remains compatible.
+        v0.3 Wave 1 is fully implemented: group messaging, typing/read cursors, markdown rendering,
+        encrypted message cache with privacy control, and WebRTC federated voice calls. /api/v1 remains compatible.
       </div>
     </section>
   </main>
 
   <footer>
     <div class="container">
-      <div>Blackwire v0.2 release showcase site for GitHub Pages.</div>
+      <div>Blackwire v0.3 Wave 1 release showcase site for GitHub Pages.</div>
       <div>Updated <span id="year"></span> | See <a href="README.md">README.md</a> for full setup details.</div>
     </div>
   </footer>
