@@ -29,6 +29,12 @@ class FederationClient:
             return httpx.AsyncClient(timeout=10.0, proxy=self.settings.tor_socks5_url)
         return httpx.AsyncClient(timeout=10.0)
 
+    def _build_base_url(self, peer: str) -> str:
+        """Return http:// for .onion hosts (routed through Tor), https:// for clearnet."""
+        if is_onion_authority(peer):
+            return f"http://{peer}"
+        return f"https://{peer}"
+
     async def get_remote_user_device(self, peer_onion: str, username: str) -> UserDeviceLookup:
         peer = peer_onion.strip().lower()
         normalized_username = username.strip().lower()
@@ -36,11 +42,11 @@ class FederationClient:
             raise FederationClientError(400, "Invalid remote server onion authority")
         if not normalized_username:
             raise FederationClientError(400, "Invalid remote username")
+        base = self._build_base_url(peer)
         async with await self._build_http_client() as client:
             try:
                 response = await client.get(
-                    "http://"
-                    f"{peer}{self.settings.api_prefix}/federation/users/"
+                    f"{base}{self.settings.api_prefix}/federation/users/"
                     f"{quote(normalized_username, safe='')}/device"
                 )
             except httpx.HTTPError as exc:
@@ -63,9 +69,9 @@ class FederationClient:
 
         async with await self._build_http_client() as client:
             try:
+                base = self._build_base_url(peer)
                 response = await client.get(
-                    "http://"
-                    f"{peer}/api/v2/federation/users/{quote(normalized_username, safe='')}/devices"
+                    f"{base}/api/v2/federation/users/{quote(normalized_username, safe='')}/devices"
                 )
             except httpx.HTTPError as exc:
                 raise FederationClientError(
@@ -99,9 +105,9 @@ class FederationClient:
 
         async with await self._build_http_client() as client:
             try:
+                base = self._build_base_url(peer)
                 response = await client.get(
-                    "http://"
-                    f"{peer}/api/v2/federation/users/{quote(normalized_username, safe='')}/prekeys"
+                    f"{base}/api/v2/federation/users/{quote(normalized_username, safe='')}/prekeys"
                 )
             except httpx.HTTPError as exc:
                 raise FederationClientError(
@@ -123,9 +129,9 @@ class FederationClient:
 
         async with await self._build_http_client() as client:
             try:
+                base = self._build_base_url(peer)
                 response = await client.get(
-                    "http://"
-                    f"{peer}/api/v2/federation/groups/{quote(normalized_group_uid, safe='')}/snapshot"
+                    f"{base}/api/v2/federation/groups/{quote(normalized_group_uid, safe='')}/snapshot"
                 )
             except httpx.HTTPError as exc:
                 raise FederationClientError(502, f"Remote group snapshot lookup failed for {normalized_group_uid}") from exc
@@ -146,11 +152,12 @@ class FederationClient:
         body_bytes = orjson.dumps(payload_json)
         headers = federation_security_service.sign_headers("POST", endpoint_path, body_bytes)
         headers["Content-Type"] = "application/json"
+        base = self._build_base_url(peer)
 
         async with await self._build_http_client() as client:
             try:
                 response = await client.post(
-                    f"http://{peer}{endpoint_path}",
+                    f"{base}{endpoint_path}",
                     content=body_bytes,
                     headers=headers,
                 )

@@ -29,6 +29,21 @@
 
 namespace blackwire {
 
+// RAII guard that increments api_operation_depth_ on construction and
+// decrements it on destruction.  When the depth is >0 the presence poll
+// timer skips its tick, preventing reentrant LoadConversations() calls
+// that otherwise happen when QEventLoop::exec() inside RequestJson
+// processes timer events.
+class ApiOperationGuard {
+public:
+    explicit ApiOperationGuard(int& depth) : depth_(depth) { ++depth_; }
+    ~ApiOperationGuard() { --depth_; }
+    ApiOperationGuard(const ApiOperationGuard&) = delete;
+    ApiOperationGuard& operator=(const ApiOperationGuard&) = delete;
+private:
+    int& depth_;
+};
+
 namespace {
 
 constexpr int kMaxDiagnostics = 200;
@@ -217,10 +232,13 @@ ApplicationController::ApplicationController(
     client_version_ = ClientVersionString();
 
     presence_poll_timer_ = new QTimer(this);
-    presence_poll_timer_->setInterval(5000);
+    presence_poll_timer_->setInterval(15000);
     connect(presence_poll_timer_, &QTimer::timeout, this, [this]() {
         if (!state_.has_user || !state_.has_device) {
             return;
+        }
+        if (api_operation_depth_ > 0) {
+            return;  // Skip poll while another API operation is in-flight
         }
         LoadConversations();
     });
@@ -233,6 +251,7 @@ ApplicationController::ApplicationController(
 
     ws_client_.SetHandlers(
         [this](const WsEventMessageNew& event) {
+            ApiOperationGuard ws_guard(api_operation_depth_);
             try {
                 const auto& msg = event.message;
                 const std::string ack_id = event.copy_id.empty() ? msg.id : event.copy_id;
@@ -300,9 +319,17 @@ ApplicationController::ApplicationController(
                                                           ? std::string()
                                                           : chain_it->second;
                     if (msg.sender_prev_hash != expected_prev) {
-                        const QString line = QString("Integrity warning: missing/reordered message detected");
+                        const QString line = QString("Integrity warning: missing/reordered message detected from %1 (expected prev hash %2, got %3)")
+                                                 .arg(QString::fromStdString(msg.sender_address),
+                                                      QString::fromStdString(expected_prev.empty() ? "(none)" : expected_prev),
+                                                      QString::fromStdString(msg.sender_prev_hash.empty() ? "(none)" : msg.sender_prev_hash));
                         RecordDiagnostic(line);
                         emit IntegrityWarningOccurred(line);
+                        // Reject the message when chain continuity is broken and we have
+                        // a known previous hash (i.e. this is not the first message).
+                        if (!expected_prev.empty()) {
+                            return;
+                        }
                     }
                     state_.last_verified_chain_hash_by_conversation_sender[chain_key] = msg.sender_chain_hash;
                 }
@@ -981,7 +1008,9 @@ ApplicationController::ApplicationController(
                 emit UserPresenceChanged("offline");
             } else {
                 emit UserPresenceChanged(user_presence_status_);
-                RefreshPresenceCache();
+                if (api_operation_depth_ == 0) {
+                    RefreshPresenceCache();
+                }
                 RefreshConversationList();
             }
 
@@ -997,7 +1026,7 @@ void ApplicationController::Initialize() {
     try {
         state_ = state_store_.Load();
         if (state_.base_url.empty()) {
-            state_.base_url = "http://localhost:8000";
+            state_.base_url = "https://localhost:8000";
         }
         user_presence_status_ = NormalizePresenceValue(QString::fromStdString(state_.social_preferences.presence_status));
         state_.social_preferences.presence_status = user_presence_status_.toStdString();
@@ -1037,7 +1066,7 @@ void ApplicationController::SetBaseUrl(const QString& base_url) {
 }
 
 QString ApplicationController::BaseUrl() const {
-    return QString::fromStdString(state_.base_url.empty() ? "http://localhost:8000" : state_.base_url);
+    return QString::fromStdString(state_.base_url.empty() ? "https://localhost:8000" : state_.base_url);
 }
 
 void ApplicationController::Register(const QString& username, const QString& password) {
@@ -1127,6 +1156,16 @@ void ApplicationController::Login(const QString& username, const QString& passwo
                 UploadCurrentDevicePrekeys();
                 PersistState();
                 LoadConversations();
+
+                // Validate persisted selection survives the fresh load.
+                if (!selected_conversation_id_.empty() && !ConversationExists(selected_conversation_id_)) {
+                    RecordDiagnostic(
+                        QString("clearing stale selected_conversation_id_=%1 after re-bind")
+                            .arg(QString::fromStdString(selected_conversation_id_)));
+                    selected_conversation_id_.clear();
+                    emit ConversationSelected(QString(), {});
+                }
+
                 StartRealtime();
                 LoadSystemVersion();
                 SetPresenceStatus(preferred_presence_status);
@@ -1221,6 +1260,18 @@ void ApplicationController::SetupDevice(const QString& label) {
         LoadAudioDevices();
 
         LoadConversations();
+
+        // Validate that any previously-persisted selected conversation
+        // still exists after the fresh load.  If it was deleted or left,
+        // clear the stale selection to avoid empty-ID API calls.
+        if (!selected_conversation_id_.empty() && !ConversationExists(selected_conversation_id_)) {
+            RecordDiagnostic(
+                QString("clearing stale selected_conversation_id_=%1 after login")
+                    .arg(QString::fromStdString(selected_conversation_id_)));
+            selected_conversation_id_.clear();
+            emit ConversationSelected(QString(), {});
+        }
+
         StartRealtime();
         LoadSystemVersion();
         SetPresenceStatus(preferred_presence_status);
@@ -1295,6 +1346,7 @@ void ApplicationController::RevokeDevice(const QString& device_uid) {
 }
 
 void ApplicationController::LoadConversations() {
+    ApiOperationGuard guard(api_operation_depth_);
     try {
         std::unordered_map<std::string, std::pair<std::string, std::string>> previous_group_state;
         previous_group_state.reserve(state_.conversations.size());
@@ -1359,6 +1411,7 @@ void ApplicationController::LoadConversations() {
 }
 
 void ApplicationController::OpenConversationByPeer(const QString& username) {
+    ApiOperationGuard guard(api_operation_depth_);
     try {
         QString error;
         const auto normalized = NormalizePeerUsername(username, &error);
@@ -1395,26 +1448,59 @@ void ApplicationController::OpenConversationByPeer(const QString& username) {
 }
 
 void ApplicationController::SelectConversation(const QString& conversation_id) {
+    ApiOperationGuard guard(api_operation_depth_);
     try {
-        selected_conversation_id_ = conversation_id.toStdString();
+        const std::string conv_key = conversation_id.trimmed().toStdString();
+        if (conv_key.empty()) {
+            return;
+        }
+
+        const ConversationOut* pre_check = FindConversation(conv_key);
+        if (pre_check == nullptr) {
+            // Conversation no longer in local state (e.g. left/deleted).
+            if (selected_conversation_id_ == conv_key) {
+                selected_conversation_id_.clear();
+                emit ConversationSelected(QString(), {});
+            }
+            return;
+        }
+
+        selected_conversation_id_ = conv_key;
 
         const ConversationOut* selected = FindConversation(selected_conversation_id_);
         if (selected != nullptr && selected->conversation_type == "group") {
             const QString membership_state = QString::fromStdString(selected->membership_state).trimmed().toLower();
             if (membership_state == "invited") {
-                const auto accept_op = [this]() {
-                    return api_client_.AcceptConversationInvite(
-                        state_.base_url,
-                        RequireAccessToken(),
-                        selected_conversation_id_);
-                };
-                (void)CallWithAuthRetryOnce<ConversationMemberOut>(accept_op, [this]() { RefreshAccessToken(); });
-                LoadConversations();
-                RecordDiagnostic(
-                    QString("accepted group invite conversation_id=%1")
-                        .arg(QString::fromStdString(selected_conversation_id_)));
+                try {
+                    const auto accept_op = [this]() {
+                        return api_client_.AcceptConversationInvite(
+                            state_.base_url,
+                            RequireAccessToken(),
+                            selected_conversation_id_);
+                    };
+                    (void)CallWithAuthRetryOnce<ConversationMemberOut>(accept_op, [this]() { RefreshAccessToken(); });
+                    LoadConversations();
+                    RecordDiagnostic(
+                        QString("accepted group invite conversation_id=%1")
+                            .arg(QString::fromStdString(selected_conversation_id_)));
+                } catch (const ApiException& ex) {
+                    if (ex.status_code() == 404 || ex.status_code() == 403) {
+                        // Group was deleted or we are no longer a member.
+                        RecordDiagnostic(
+                            QString("accept invite failed status=%1 conversation_id=%2 — clearing selection")
+                                .arg(ex.status_code())
+                                .arg(QString::fromStdString(selected_conversation_id_)));
+                        selected_conversation_id_.clear();
+                        emit ConversationSelected(QString(), {});
+                        LoadConversations();
+                        return;
+                    }
+                    throw;  // re-throw other API errors
+                }
             } else if (membership_state != "active" && membership_state != "none") {
                 emit ErrorOccurred("You are not an active member of this group.");
+                selected_conversation_id_.clear();
+                emit ConversationSelected(QString(), {});
                 return;
             }
         }
@@ -1599,7 +1685,7 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
         });
 
         state_.local_messages[selected_conversation_id_] = rebuilt;
-        if (EnvFlagEnabled("BLACKWIRE_ENABLE_READ_CURSOR_V03B", true)) {
+        if (EnvFlagEnabled("BLACKWIRE_ENABLE_READ_CURSOR_V03B", true) && !selected_conversation_id_.empty()) {
             try {
                 const auto read_state_op = [this]() {
                     return api_client_.GetConversationReadState(
@@ -1704,7 +1790,18 @@ bool ApplicationController::LeaveGroupConversation(const QString& conversation_i
                 RequireAccessToken(),
                 conversation_key);
         };
-        (void)CallWithAuthRetryOnce<ConversationMemberOut>(operation, [this]() { RefreshAccessToken(); });
+        try {
+            (void)CallWithAuthRetryOnce<ConversationMemberOut>(operation, [this]() { RefreshAccessToken(); });
+        } catch (const ApiException& ex) {
+            if (ex.status_code() == 404) {
+                // Group already deleted (e.g. owner left) — proceed with
+                // local cleanup so the stale entry is removed.
+                RecordDiagnostic(
+                    QString("leave group 404 (already deleted) id=%1").arg(conversation_id));
+            } else {
+                throw;
+            }
+        }
 
         state_.local_messages.erase(conversation_key);
         state_.conversation_meta.erase(conversation_key);
@@ -1739,6 +1836,7 @@ bool ApplicationController::LeaveGroupConversation(const QString& conversation_i
 }
 
 bool ApplicationController::CreateGroupFromCurrentDm() {
+    ApiOperationGuard guard(api_operation_depth_);
     try {
         if (!state_.has_user || !state_.has_device) {
             emit ErrorOccurred("Sign in before creating a group.");
@@ -2061,6 +2159,7 @@ bool ApplicationController::IsSelectedConversationOwnerManagedGroup() const {
 }
 
 void ApplicationController::SendMessageToPeer(const QString& peer_username, const QString& message_text) {
+    ApiOperationGuard guard(api_operation_depth_);
     try {
         if (message_text.trimmed().isEmpty()) {
             return;
@@ -2226,6 +2325,18 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
                     const auto prekeys =
                         CallWithAuthRetryOnce<ResolvePrekeysResponse>(prekey_op, [this]() { RefreshAccessToken(); });
                     for (const auto& item : prekeys.devices) {
+                        // Fix #16: Verify signed prekey signature before trusting it.
+                        if (item.signed_prekey.has_value() && !item.pub_sign_key.empty()) {
+                            const auto& spk = item.signed_prekey.value();
+                            const std::string canonical = CanonicalSignedPrekeyString(
+                                item.device_uid, spk.key_id, spk.pub_x25519_b64, spk.expires_at);
+                            if (!crypto_.VerifyDetached(item.pub_sign_key, canonical, spk.sig_by_device_sign_key_b64)) {
+                                RecordDiagnostic(
+                                    QString("ratchet: invalid signed prekey signature from device %1")
+                                        .arg(QString::fromStdString(item.device_uid)));
+                                continue;  // Skip this device's prekey – don't trust it.
+                            }
+                        }
                         prekeys_by_device[item.device_uid] = item;
                     }
                 } catch (const std::exception& ex) {
@@ -2393,7 +2504,23 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
         const auto send_op = [this, &request]() {
             return api_client_.SendMessage(state_.base_url, RequireAccessToken(), request);
         };
-        const auto sent = CallWithAuthRetryOnce<MessageSendResponse>(send_op, [this]() { RefreshAccessToken(); });
+        MessageSendResponse sent;
+        try {
+            sent = CallWithAuthRetryOnce<MessageSendResponse>(send_op, [this]() { RefreshAccessToken(); });
+        } catch (const ApiException& ex) {
+            if (ex.status_code() == 400) {
+                // 400 usually means device fanout mismatch (stale device
+                // list).  Clear caches so the next attempt resolves fresh
+                // devices.
+                peer_device_cache_.clear();
+                RecordDiagnostic(
+                    QString("send 400 — cleared device cache, retrying once"));
+                // Retry the full send (will re-resolve devices).
+                throw;  // propagate to outer catch which records UI error;
+                         // user can press send again with fresh caches.
+            }
+            throw;
+        }
 
         const std::string resolved_conversation_id =
             sent.message.conversation_id.empty() ? conversation_id : sent.message.conversation_id;
@@ -3024,7 +3151,10 @@ void ApplicationController::PublishTypingState(const QString& conversation_id, b
         };
         (void)CallWithAuthRetryOnce<ConversationTypingResponse>(op, [this]() { RefreshAccessToken(); });
     } catch (const ApiException& ex) {
-        if (ex.status_code() == 404) {
+        if (ex.status_code() == 404 || ex.status_code() == 403) {
+            // 404: conversation doesn't exist; 403: not an active member
+            // (e.g. still in "invited" state for a group).  Both are
+            // non-fatal for typing indicators.
             return;
         }
         RecordDiagnostic(QString("typing publish failed: %1").arg(QString::fromStdString(ex.what())));
@@ -3287,6 +3417,14 @@ void ApplicationController::RefreshAccessToken() {
 
 void ApplicationController::StartRealtime() {
     try {
+        ws_client_.SetTokenRefreshCallback([this]() -> std::string {
+            try {
+                RefreshAccessToken();
+                return RequireAccessToken();
+            } catch (...) {
+                return {};
+            }
+        });
         ws_client_.Connect(state_.base_url, RequireAccessToken());
     } catch (const std::exception& ex) {
         const QString line = QString("WS start failed: %1").arg(ex.what());
@@ -3755,6 +3893,7 @@ void ApplicationController::ReauthenticateWebSocket() {
         return;
     }
     ws_reauth_in_progress_ = true;
+    ApiOperationGuard guard(api_operation_depth_);
 
     try {
         RefreshAccessToken();
@@ -4221,6 +4360,7 @@ bool ApplicationController::StartAudioEngineForActiveCall(QString* warning, QStr
     }
 
     audio_sequence_ = 0;
+    audio_send_clock_.start();
     const QString active_call_id = call_state_.call_id;
     const QString input_device_id = PreferredInputDeviceId();
     const QString output_device_id = PreferredOutputDeviceId();
@@ -4235,6 +4375,16 @@ bool ApplicationController::StartAudioEngineForActiveCall(QString* warning, QStr
             if (!IsCallState("active") || call_state_.call_id != active_call_id) {
                 return;
             }
+
+            // Throttle outbound audio to avoid tripping the server's
+            // voice_audio_min_interval_ms rate limiter when the mic driver
+            // delivers multiple frames in a single readyRead burst.
+            constexpr qint64 kMinSendIntervalMs = 18;
+            const qint64 elapsed = audio_send_clock_.elapsed();
+            if (elapsed < kMinSendIntervalMs) {
+                return;  // drop frame — next one will arrive in ~20ms
+            }
+            audio_send_clock_.restart();
 
             VoiceAudioChunk chunk;
             chunk.call_id = active_call_id.toStdString();
@@ -4432,7 +4582,7 @@ void ApplicationController::UpsertConversationMeta(
 
 void ApplicationController::ClearInMemoryState() {
     state_ = ClientState{};
-    state_.base_url = "http://localhost:8000";
+    state_.base_url = "https://localhost:8000";
     peer_device_cache_.clear();
     peer_attachment_policy_cache_.clear();
     local_attachment_policy_cache_.reset();

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <QObject>
+#include <QElapsedTimer>
 #include <QMetaType>
 #include <QString>
 
@@ -235,6 +236,8 @@ private:
     QTimer* presence_poll_timer_ = nullptr;
     QTimer* typing_expiry_timer_ = nullptr;
     int audio_sequence_ = 0;
+    QElapsedTimer audio_send_clock_;
+    int api_operation_depth_ = 0;
 };
 
 }  // namespace blackwire

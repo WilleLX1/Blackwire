@@ -55,9 +55,6 @@ def _extract_bearer_token(websocket: WebSocket) -> str | None:
         token = auth_header[len(_BEARER_PREFIX) :].strip()
         if token:
             return token
-    query_token = websocket.query_params.get("access_token", "").strip()
-    if query_token:
-        return query_token
     return None
 
 
@@ -98,6 +95,20 @@ def create_app() -> FastAPI:
     async def on_startup() -> None:
         if len(settings.jwt_secret_key.encode("utf-8")) < 32:
             raise RuntimeError("BLACKWIRE_JWT_SECRET_KEY must be at least 32 bytes")
+        _KNOWN_INSECURE_DEFAULTS = {
+            "change-this-secret-minimum-32-bytes",
+            "change-me",
+            "secret",
+        }
+        if settings.jwt_secret_key in _KNOWN_INSECURE_DEFAULTS:
+            if settings.environment != "dev":
+                raise RuntimeError(
+                    "BLACKWIRE_JWT_SECRET_KEY is set to a known insecure default. "
+                    "Generate a unique secret before running in test/prod."
+                )
+            logger.warning(
+                "JWT_SECRET_KEY is a known insecure default – acceptable in dev only"
+            )
         if settings.environment != "dev" and "*" in settings.allow_origins:
             raise RuntimeError("Wildcard CORS origin is not allowed outside dev")
         if settings.enable_webrtc_v2b2 and not settings.webrtc_ice_servers_json.strip():
@@ -113,6 +124,11 @@ def create_app() -> FastAPI:
                 raise RuntimeError("BLACKWIRE_WEBRTC_ICE_SERVERS_JSON must be a non-empty JSON array")
 
         initialize_server_identity(settings)
+        if settings.jwt_algorithm == "HS256":
+            logger.warning(
+                "V1 API uses HS256 symmetric JWT – any token verifier can forge tokens. "
+                "Migrate clients to /api/v2 (EdDSA) and disable V1 routes when ready."
+            )
         typing_service_v2.settings = settings
         read_state_service_v2.settings = settings
         server_onion = get_server_onion()
@@ -191,6 +207,17 @@ def create_app() -> FastAPI:
         if not user_id:
             await websocket.close(code=1008, reason="Invalid access token")
             return
+
+        session_factory = get_session_factory()
+        async with session_factory() as auth_session:
+            from sqlalchemy import select
+            from app.models.user import User
+
+            user_stmt = select(User).where(User.id == user_id, User.disabled_at.is_(None))
+            ws_user = (await auth_session.execute(user_stmt)).scalar_one_or_none()
+            if ws_user is None:
+                await websocket.close(code=1008, reason="User not found or disabled")
+                return
 
         await connection_manager.connect(user_id=user_id, websocket=websocket)
 

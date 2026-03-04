@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
         QStringList() << "base-url",
         "Base URL used by smoke mode",
         "base-url",
-        "http://localhost:8000");
+        "https://localhost:8000");
     QCommandLineOption profile_option(
         QStringList() << "profile",
         "Local profile name used to isolate state and credentials",

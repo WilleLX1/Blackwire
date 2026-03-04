@@ -143,7 +143,11 @@ bool WindowsCredentialStore::DeleteSecretsMatching(const std::string& needle, st
         }
 
         const std::string target = ToUtf8(cred->TargetName);
-        if (Lower(target).find(lowered_needle) == std::string::npos) {
+        // Use prefix match instead of substring to prevent accidentally
+        // deleting unrelated system credentials that happen to contain
+        // the needle somewhere in their name.
+        const std::string lowered_target = Lower(target);
+        if (lowered_target.rfind(lowered_needle, 0) != 0) {
             continue;
         }
 

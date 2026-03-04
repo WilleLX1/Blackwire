@@ -71,7 +71,7 @@ async def _verify_federation_write_auth(
         await metrics.inc("attachments.send.rejected_too_large")
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Federation payload too large")
     await federation_security_service.verify_incoming(session, request, raw_body)
-    sender = request.headers.get("x-bw-sender", "unknown").strip().lower() or "unknown"
+    sender = request.headers.get("x-bw-fed-server", "").strip().lower() or "unknown"
     try:
         await rate_limiter.enforce_weighted(
             f"v2-federation-bytes:{sender}",

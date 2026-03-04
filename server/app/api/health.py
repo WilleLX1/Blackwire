@@ -30,6 +30,5 @@ async def readiness() -> JSONResponse:
     payload = {
         "status": "ready" if is_ready else "not_ready",
         "database": db_ok,
-        "migration_version": migration_version,
     }
     return JSONResponse(payload, status_code=status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE)

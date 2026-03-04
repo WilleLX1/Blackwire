@@ -15,6 +15,14 @@ class RateLimiter:
 
     async def start(self) -> None:
         if not self.settings.use_redis_rate_limit or not self.settings.redis_url:
+            import logging
+
+            _rl_logger = logging.getLogger("blackwire.rate_limit")
+            if self.settings.environment != "dev":
+                _rl_logger.warning(
+                    "In-memory rate limiter active – limits are per-process only. "
+                    "Set BLACKWIRE_USE_REDIS_RATE_LIMIT=true for production."
+                )
             return
 
         try:

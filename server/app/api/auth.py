@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.utils import client_rate_limit_key
+from app.api.utils import client_rate_limit_key, user_rate_limit_key
 from app.dependencies import db_session
 from app.schemas.auth import (
     AuthResponse,
@@ -39,6 +39,7 @@ async def login(
     session: AsyncSession = Depends(db_session),
 ) -> AuthResponse:
     await rate_limiter.enforce(client_rate_limit_key(request, "auth-login"))
+    await rate_limiter.enforce(user_rate_limit_key("auth-login", payload.username), limit=10)
     try:
         user = await auth_service.authenticate(session, payload.username, payload.password)
         tokens = await auth_service.issue_tokens(session, user)

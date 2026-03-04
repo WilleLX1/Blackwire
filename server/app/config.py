@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     federation_nonce_ttl_seconds: int = 300
     federation_outbox_poll_interval_seconds: int = 5
 
+    tls_enabled: bool = True
+    tls_cert_file: str = "/app/certs/server.crt"
+    tls_key_file: str = "/app/certs/server.key"
+
     rate_limit_per_minute: int = 120
     use_redis_rate_limit: bool = False
     redis_url: str | None = None

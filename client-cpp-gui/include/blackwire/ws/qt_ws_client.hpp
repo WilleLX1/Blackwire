@@ -34,6 +34,7 @@ public:
         ErrorHandler on_error,
         StatusHandler on_status) override;
     void Connect(const std::string& base_url, const std::string& access_token) override;
+    void SetTokenRefreshCallback(TokenRefreshCallback callback) override;
     void Disconnect() override;
     void SendAck(const std::string& message_id) override;
     void SendCallOffer(const VoiceCallOffer& offer) override;
@@ -74,6 +75,7 @@ private:
 
     std::string base_url_;
     std::string access_token_;
+    TokenRefreshCallback token_refresh_callback_;
     bool should_reconnect_ = false;
     int reconnect_attempt_ = 0;
 };

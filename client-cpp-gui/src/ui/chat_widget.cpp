@@ -1002,6 +1002,13 @@ QWidget* ChatWidget::CreateThreadMessageWidget(const ThreadMessageView& message)
             auto* play_button = new QPushButton("Play video", bubble);
             play_button->setObjectName("secondaryButton");
             QObject::connect(play_button, &QPushButton::clicked, bubble, [file_name, file_bytes, this]() {
+                // Clean up any leftover temp video files from previous crashes.
+                const QDir temp_dir(QDir::tempPath());
+                const auto orphans = temp_dir.entryList({"blackwire_video_*"}, QDir::Files);
+                for (const auto& orphan : orphans) {
+                    QFile::remove(temp_dir.filePath(orphan));
+                }
+
                 QTemporaryFile temp_file(QDir::tempPath() + "/blackwire_video_XXXXXX");
                 temp_file.setAutoRemove(false);
                 if (!temp_file.open()) {

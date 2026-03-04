@@ -6,10 +6,13 @@
 #include <QJsonDocument>
 #include <QNetworkProxy>
 #include <QNetworkRequest>
+#include <QSslError>
 #include <QStringList>
 #include <QUrl>
 
 #include <nlohmann/json.hpp>
+
+#include "blackwire/util/ssl_trust.hpp"
 
 namespace blackwire {
 
@@ -118,8 +121,27 @@ QtWsClient::QtWsClient(QObject* parent) : QObject(parent) {
         }
     });
 
+    // Handle self-signed / untrusted server certificates on the WebSocket.
+    QObject::connect(&socket_, &QWebSocket::sslErrors, this,
+        [this](const QList<QSslError>& errors) {
+            if (SslTrust::ShouldIgnoreErrors(errors)) {
+                socket_.ignoreSslErrors();
+            }
+        });
+
     QObject::connect(&reconnect_timer_, &QTimer::timeout, this, [this]() {
         if (should_reconnect_) {
+            // Refresh the token before reconnecting if a callback is available.
+            if (token_refresh_callback_) {
+                try {
+                    std::string fresh = token_refresh_callback_();
+                    if (!fresh.empty()) {
+                        access_token_ = std::move(fresh);
+                    }
+                } catch (...) {
+                    // Use the existing token as fallback.
+                }
+            }
             socket_.open(BuildWsRequest(BuildWsUrl(), access_token_));
         }
     });
@@ -168,8 +190,13 @@ void QtWsClient::Connect(const std::string& base_url, const std::string& access_
     base_url_ = base_url;
     access_token_ = access_token;
     should_reconnect_ = true;
+    reconnect_attempt_ = 0;
     ApplySocketProxy(&socket_, QUrl(QString::fromStdString(base_url_)));
     socket_.open(BuildWsRequest(BuildWsUrl(), access_token_));
+}
+
+void QtWsClient::SetTokenRefreshCallback(TokenRefreshCallback callback) {
+    token_refresh_callback_ = std::move(callback);
 }
 
 void QtWsClient::Disconnect() {
@@ -234,7 +261,10 @@ void QtWsClient::SendCallWebRtcIce(const VoiceCallWebRtcIce& ice) {
 void QtWsClient::ScheduleReconnect() {
     reconnect_attempt_ += 1;
     const int max_ms = 30000;
-    const int delay = std::min(max_ms, 1000 * (1 << std::min(5, reconnect_attempt_)));
+    const int base_delay = std::min(max_ms, 1000 * (1 << std::min(5, reconnect_attempt_)));
+    // Add random jitter (0-25% of base delay) to prevent thundering herd.
+    const int jitter = base_delay > 0 ? (std::rand() % (base_delay / 4 + 1)) : 0;
+    const int delay = std::min(max_ms, base_delay + jitter);
     reconnect_timer_.start(delay);
 }
 

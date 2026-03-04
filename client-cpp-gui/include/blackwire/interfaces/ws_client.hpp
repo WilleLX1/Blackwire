@@ -27,6 +27,7 @@ public:
     using ConversationReadHandler = std::function<void(const WsEventConversationRead&)>;
     using ErrorHandler = std::function<void(const std::string&)>;
     using StatusHandler = std::function<void(bool)>;
+    using TokenRefreshCallback = std::function<std::string()>;
 
     virtual ~IWsClient() = default;
 
@@ -50,6 +51,7 @@ public:
         ErrorHandler on_error,
         StatusHandler on_status) = 0;
     virtual void Connect(const std::string& base_url, const std::string& access_token) = 0;
+    virtual void SetTokenRefreshCallback(TokenRefreshCallback callback) = 0;
     virtual void Disconnect() = 0;
     virtual void SendAck(const std::string& message_id) = 0;
     virtual void SendCallOffer(const VoiceCallOffer& offer) = 0;

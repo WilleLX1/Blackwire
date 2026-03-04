@@ -1,4 +1,5 @@
 import re
+import string
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -45,12 +46,28 @@ class AuthService:
             )
         return normalized
 
+    @staticmethod
+    def _validate_password_complexity(password: str) -> None:
+        """Require at least one uppercase, one lowercase, one digit, and one special char."""
+        if len(password) < 8:
+            raise AuthServiceError("Password must be at least 8 characters", status_code=400)
+        has_upper = any(c in string.ascii_uppercase for c in password)
+        has_lower = any(c in string.ascii_lowercase for c in password)
+        has_digit = any(c in string.digits for c in password)
+        has_special = any(c in string.punctuation for c in password)
+        if not (has_upper and has_lower and has_digit and has_special):
+            raise AuthServiceError(
+                "Password must contain uppercase, lowercase, digit, and special character",
+                status_code=400,
+            )
+
     async def register(self, session: AsyncSession, username: str, password: str) -> User:
         normalized_username = self._normalize_username(username)
+        self._validate_password_complexity(password)
         exists_stmt = select(User).where(User.username == normalized_username)
         exists = (await session.execute(exists_stmt)).scalar_one_or_none()
         if exists is not None:
-            raise AuthServiceError("Username already exists", status_code=409)
+            raise AuthServiceError("Registration failed", status_code=409)
 
         user = User(username=normalized_username, password_hash=hash_password(password))
         session.add(user)

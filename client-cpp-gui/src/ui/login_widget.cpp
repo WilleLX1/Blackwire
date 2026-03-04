@@ -41,8 +41,8 @@ LoginWidget::LoginWidget(QWidget* parent) : QWidget(parent) {
     auto* server_label = new QLabel("HOME SERVER URL", card);
     server_label->setObjectName("loginFieldLabel");
     layout->addWidget(server_label);
-    base_url_input_ = new QLineEdit("http://localhost:8000", card);
-    base_url_input_->setPlaceholderText("http://localhost:8000 or http://yourserver.onion");
+    base_url_input_ = new QLineEdit("https://localhost:8000", card);
+    base_url_input_->setPlaceholderText("https:// or http:// (TLS optional)");
     layout->addWidget(base_url_input_);
 
     auto* user_label = new QLabel("USERNAME", card);

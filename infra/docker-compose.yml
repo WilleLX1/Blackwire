@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: blackwire
-      POSTGRES_USER: blackwire
-      POSTGRES_PASSWORD: blackwire
+      POSTGRES_DB: ${POSTGRES_DB:-blackwire}
+      POSTGRES_USER: ${POSTGRES_USER:-blackwire}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-blackwire}
     ports:
       - "5432:5432"
     volumes:
       - blackwire_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U blackwire -d blackwire"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-blackwire} -d ${POSTGRES_DB:-blackwire}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -31,8 +31,10 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+      - "8443:8000"
     volumes:
       - blackwire_tor_data:/var/lib/tor:ro
+      - blackwire_certs:/app/certs
 
   tor:
     image: alpine:3.20
@@ -60,3 +62,4 @@ services:
 volumes:
   blackwire_pg_data:
   blackwire_tor_data:
+  blackwire_certs:

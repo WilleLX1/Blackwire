@@ -33,6 +33,10 @@ DeviceKeyMaterial SodiumCryptoService::GenerateDeviceKeys() {
     out.ik_ed25519_private_b64 = EncodeBase64(sign_sk, crypto_sign_SECRETKEYBYTES);
     out.enc_x25519_public_b64 = EncodeBase64(box_pk, crypto_box_PUBLICKEYBYTES);
     out.enc_x25519_private_b64 = EncodeBase64(box_sk, crypto_box_SECRETKEYBYTES);
+
+    sodium_memzero(sign_sk, sizeof(sign_sk));
+    sodium_memzero(box_sk, sizeof(box_sk));
+
     return out;
 }
 
@@ -59,18 +63,21 @@ std::string SodiumCryptoService::EncryptForRecipient(
 std::string SodiumCryptoService::DecryptWithPrivate(
     const std::string& private_key_b64,
     const std::string& ciphertext_b64) {
-    const auto private_key = DecodeBase64(private_key_b64);
+    auto private_key = DecodeBase64(private_key_b64);
     if (private_key.size() != crypto_box_SECRETKEYBYTES) {
+        sodium_memzero(private_key.data(), private_key.size());
         throw std::runtime_error("Private key has invalid length");
     }
 
     unsigned char public_key[crypto_box_PUBLICKEYBYTES];
     if (crypto_scalarmult_base(public_key, private_key.data()) != 0) {
+        sodium_memzero(private_key.data(), private_key.size());
         throw std::runtime_error("Unable to derive public key from private key");
     }
 
     const auto ciphertext = DecodeBase64(ciphertext_b64);
     if (ciphertext.size() < crypto_box_SEALBYTES) {
+        sodium_memzero(private_key.data(), private_key.size());
         throw std::runtime_error("Ciphertext too short");
     }
 
@@ -81,17 +88,20 @@ std::string SodiumCryptoService::DecryptWithPrivate(
             ciphertext.size(),
             public_key,
             private_key.data()) != 0) {
+        sodium_memzero(private_key.data(), private_key.size());
         throw std::runtime_error("Unable to decrypt message");
     }
 
+    sodium_memzero(private_key.data(), private_key.size());
     return std::string(reinterpret_cast<const char*>(plaintext.data()), plaintext.size());
 }
 
 std::string SodiumCryptoService::SignDetached(
     const std::string& ed25519_private_key_b64,
     const std::string& message) {
-    const auto private_key = DecodeBase64(ed25519_private_key_b64);
+    auto private_key = DecodeBase64(ed25519_private_key_b64);
     if (private_key.size() != crypto_sign_SECRETKEYBYTES) {
+        sodium_memzero(private_key.data(), private_key.size());
         throw std::runtime_error("Ed25519 private key has invalid length");
     }
 
@@ -102,9 +112,11 @@ std::string SodiumCryptoService::SignDetached(
             reinterpret_cast<const unsigned char*>(message.data()),
             message.size(),
             private_key.data()) != 0) {
+        sodium_memzero(private_key.data(), private_key.size());
         throw std::runtime_error("Unable to sign payload");
     }
 
+    sodium_memzero(private_key.data(), private_key.size());
     return EncodeBase64(signature, crypto_sign_BYTES);
 }
 

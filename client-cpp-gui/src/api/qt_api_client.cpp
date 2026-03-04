@@ -5,10 +5,15 @@
 #include <QNetworkProxy>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSslConfiguration>
+#include <QSslError>
+#include <QSslSocket>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
+
+#include "blackwire/util/ssl_trust.hpp"
 
 namespace blackwire {
 
@@ -107,7 +112,16 @@ void ApplyProxyForUrl(QNetworkAccessManager* manager, const QUrl& url) {
 
 }  // namespace
 
-QtApiClient::QtApiClient(QObject* parent) : QObject(parent) {}
+QtApiClient::QtApiClient(QObject* parent) : QObject(parent) {
+    // Configure TLS once at the manager level so Qt can reuse connections
+    // (HTTP keep-alive) without re-negotiating TLS on every request.
+    QSslConfiguration ssl_config = QSslConfiguration::defaultConfiguration();
+    ssl_config.setPeerVerifyMode(QSslSocket::VerifyPeer);
+    ssl_config.setProtocol(QSsl::TlsV1_2OrLater);
+    network_.setAutoDeleteReplies(false);
+    // Apply default config so all requests through this manager inherit it.
+    QSslConfiguration::setDefaultConfiguration(ssl_config);
+}
 
 AuthResponse QtApiClient::Register(
     const std::string& base_url,
@@ -511,6 +525,15 @@ nlohmann::json QtApiClient::RequestJson(
     QNetworkRequest request{request_url};
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
+    // Qt6 enables HTTP/2 by default which multiplexes over a single
+    // TLS connection — no extra handshakes for parallel requests.
+    // For .onion hosts we skip peer verification (routed through Tor).
+    if (request_url.scheme() == "https" && IsOnionHost(request_url.host())) {
+        QSslConfiguration onion_config = QSslConfiguration::defaultConfiguration();
+        onion_config.setPeerVerifyMode(QSslSocket::VerifyNone);
+        request.setSslConfiguration(onion_config);
+    }
+
     if (!bearer_token.isEmpty()) {
         request.setRawHeader("Authorization", QString("Bearer %1").arg(bearer_token).toUtf8());
     }
@@ -526,12 +549,23 @@ nlohmann::json QtApiClient::RequestJson(
         reply = network_.sendCustomRequest(request, method.toUtf8(), payload);
     }
 
+    // Handle self-signed / untrusted server certificates.
+    // The sslErrors signal fires during the TLS handshake before the reply
+    // finishes.  If the user accepts the certificate in the dialog the
+    // connection continues; otherwise the reply will fail with an SSL error.
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+        [reply](const QList<QSslError>& errors) {
+            if (SslTrust::ShouldIgnoreErrors(errors)) {
+                reply->ignoreSslErrors();
+            }
+        });
+
     QEventLoop loop;
     QTimer timer;
     timer.setSingleShot(true);
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    timer.start(15000);
+    timer.start(30000);
     loop.exec();
 
     if (timer.isActive()) {
