@@ -122,12 +122,9 @@ inline void from_json(const nlohmann::json& j, LocalMessage& v) {
 inline void from_json(const nlohmann::json& j, ConversationMeta& v) {
     v.peer_username = j.value("peer_username", "");
     v.peer_address = j.value("peer_address", "");
-    if (j.contains("last_preview")) {
-        const auto preview = j.value("last_preview", "");
-        v.last_preview = preview.empty() ? "" : "(encrypted message)";
-    } else {
-        v.last_preview = "";
-    }
+    // Never deserialize historical last_preview plaintext from disk into runtime state.
+    // This prevents resurfacing any sensitive previews that may have been persisted.
+    v.last_preview = "[encrypted message]";
     v.last_activity_at = j.value("last_activity_at", "");
 }
 
