@@ -66,4 +66,3 @@ class RefreshTokenRecordV2(BaseModel):
     expires_at: datetime
     revoked_at: datetime | None
     replaced_by: str | None
-

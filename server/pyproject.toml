@@ -1,7 +1,7 @@
 [project]
 name = "blackwire-server"
 version = "0.1.0"
-description = "Blackwire v0.1 Tor-native federated encrypted DM backend"
+description = "Blackwire v0.4 Tor-native federated encrypted messaging backend"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models.device import ActiveDevice, Device
 from app.models.user import User
-from app.schemas.device import DeviceRegisterRequest
-from app.schemas.device import UserDeviceLookup
+from app.schemas.device import DeviceOut, DeviceRegisterRequest, UserDeviceLookup
 from app.services.federation_client import FederationClientError, federation_client
 from app.services.peer_address import parse_peer_address_with_policy
 from app.services.server_authority import is_local_server_authority
@@ -99,7 +98,7 @@ class DeviceService:
             return UserDeviceLookup(
                 username=user.username,
                 peer_address=f"{user.username}@{parsed.server_onion}",
-                device=device,
+                device=DeviceOut.model_validate(device),
             )
 
         try:

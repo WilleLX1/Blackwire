@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
-from nacl import encoding, exceptions as nacl_exceptions, signing
-from sqlalchemy import and_, select
+from nacl import encoding, signing
+from nacl import exceptions as nacl_exceptions
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -14,8 +15,8 @@ from app.schemas.v2_prekey import (
     OneTimePrekeyOutV2,
     PrekeyUploadRequestV2,
     PrekeyUploadResponseV2,
-    ResolvePrekeysResponseV2,
     ResolvedPrekeyDeviceV2,
+    ResolvePrekeysResponseV2,
     SignedPrekeyOutV2,
 )
 from app.services.device_service_v2 import device_service_v2
@@ -66,7 +67,9 @@ class PrekeyServiceV2:
             signature = encoding.Base64Encoder.decode(payload.signed_prekey.sig_by_device_sign_key_b64.encode("utf-8"))
             verify_key.verify(canonical, signature)
         except (ValueError, nacl_exceptions.BadSignatureError) as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signed prekey signature") from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signed prekey signature"
+            ) from exc
 
         signed_stmt = select(DeviceSignedPrekey).where(
             DeviceSignedPrekey.device_id == device.id,
@@ -129,7 +132,9 @@ class PrekeyServiceV2:
                 return await federation_client.get_remote_user_prekeys_v2(parsed.server_onion, parsed.username)
             except FederationClientError as exc:
                 if exc.status_code == 404:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Remote peer prekeys not found") from exc
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND, detail="Remote peer prekeys not found"
+                    ) from exc
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail) from exc
 
         lookup = await device_service_v2.resolve_devices_by_peer_address(

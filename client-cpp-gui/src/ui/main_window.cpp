@@ -14,6 +14,36 @@
 
 namespace blackwire {
 
+namespace {
+
+QString ValidateAuthFields(const QString& username, const QString& password, bool require_strong_password) {
+    const QString normalized_username = username.trimmed();
+    if (normalized_username.size() < 3) {
+        return "Username must be at least 3 characters.";
+    }
+    if (password.size() < 8) {
+        return "Password must be at least 8 characters.";
+    }
+    if (require_strong_password) {
+        bool has_upper = false;
+        bool has_lower = false;
+        bool has_digit = false;
+        bool has_special = false;
+        for (const QChar ch : password) {
+            has_upper = has_upper || ch.isUpper();
+            has_lower = has_lower || ch.isLower();
+            has_digit = has_digit || ch.isDigit();
+            has_special = has_special || (!ch.isLetterOrNumber() && !ch.isSpace());
+        }
+        if (!has_upper || !has_lower || !has_digit || !has_special) {
+            return "Password must include uppercase, lowercase, digit, and special character.";
+        }
+    }
+    return QString();
+}
+
+}  // namespace
+
 MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
     : QMainWindow(parent), controller_(controller) {
     setWindowTitle("Blackwire Client");
@@ -37,14 +67,46 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
     stack->setCurrentWidget(login_widget_);
 
     connect(login_widget_, &LoginWidget::LoginRequested, this, [this]() {
+        const QString validation_error = ValidateAuthFields(
+            login_widget_->Username(),
+            login_widget_->Password(),
+            false);
+        if (!validation_error.isEmpty()) {
+            QMessageBox::warning(this, "Blackwire", validation_error);
+            return;
+        }
         controller_.SetBaseUrl(login_widget_->BaseUrl());
         controller_.Login(login_widget_->Username(), login_widget_->Password());
     });
 
     connect(login_widget_, &LoginWidget::RegisterRequested, this, [this]() {
+        const QString validation_error = ValidateAuthFields(
+            login_widget_->Username(),
+            login_widget_->Password(),
+            true);
+        if (!validation_error.isEmpty()) {
+            QMessageBox::warning(this, "Blackwire", validation_error);
+            return;
+        }
+        if (login_widget_->Password() != login_widget_->ConfirmPassword()) {
+            QMessageBox::warning(this, "Blackwire", "Passwords do not match.");
+            return;
+        }
         controller_.SetBaseUrl(login_widget_->BaseUrl());
         controller_.Register(login_widget_->Username(), login_widget_->Password());
     });
+
+    connect(
+        login_widget_,
+        &LoginWidget::RegistrationServerInfoRefreshRequested,
+        this,
+        [this](const QString& base_url) {
+            try {
+                login_widget_->SetRegistrationServerInfo(controller_.InspectRegistrationServer(base_url));
+            } catch (const std::exception& ex) {
+                login_widget_->SetRegistrationServerInfoError(ex.what());
+            }
+        });
 
     connect(device_widget_, &DeviceSetupWidget::DeviceSetupRequested, this, [this]() {
         controller_.SetupDevice(device_widget_->DeviceLabel());
@@ -214,6 +276,7 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
     connect(settings_dialog_, &SettingsDialog::ResetStateRequested, this, [this]() {
         controller_.ResetLocalState();
         login_widget_->SetBaseUrl(controller_.BaseUrl());
+        login_widget_->ShowLoginPage();
     });
 
     connect(
@@ -229,6 +292,7 @@ MainWindow::MainWindow(ApplicationController& controller, QWidget* parent)
                 settings_dialog_->SetAccountDevices(std::vector<DeviceOut>{}, QString());
                 settings_dialog_->SetVersionInfo(controller_.ClientVersion(), QString());
                 login_widget_->SetBaseUrl(controller_.BaseUrl());
+                login_widget_->ShowLoginPage();
                 stack->setCurrentWidget(login_widget_);
                 return;
             }

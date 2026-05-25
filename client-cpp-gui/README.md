@@ -1,6 +1,6 @@
 # Blackwire C++ GUI Client
 
-Qt 6 Widgets desktop client for Blackwire v0.1.
+Qt 6 Widgets desktop client for Blackwire v0.4.
 
 ## Features
 
@@ -40,12 +40,24 @@ Qt 6 Widgets desktop client for Blackwire v0.1.
 ./scripts/run.ps1 -Config Debug
 ```
 
+Fresh profiles default to `http://localhost:8000`, matching the local Docker
+server. To repoint an existing profile, run once with:
+
+```powershell
+./scripts/run.ps1 -Config Debug -Profile alice -BaseUrl http://localhost:8000
+```
+
 Run multiple clients on one machine with isolated local state:
 
 ```powershell
 ./scripts/run.ps1 -Config Debug -Profile alice
 ./scripts/run.ps1 -Config Debug -Profile bob
 ```
+
+Each profile can only be open once. If a second window reports that the profile
+is already open, launch it with another `-Profile` value. Logging into the same
+server account from two profiles will still show the same server-side
+conversations, which is expected account sync.
 
 Launch detached from one terminal:
 
@@ -57,7 +69,7 @@ Launch detached from one terminal:
 Equivalent direct executable flag:
 
 ```powershell
-blackwire_client.exe --profile=alice
+blackwire_client.exe --profile=alice --base-url=http://localhost:8000
 ```
 
 ## Portable Release Bundle (no manual VC++ install)

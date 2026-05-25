@@ -1,4 +1,3 @@
-
 import asyncio
 import base64
 import binascii
@@ -1042,9 +1041,10 @@ class CallService:
             return
         for user_id in call.local_participants():
             self._user_to_call.pop(user_id, None)
-        if call.timeout_task is not None:
+        current_task = asyncio.current_task()
+        if call.timeout_task is not None and call.timeout_task is not current_task:
             call.timeout_task.cancel()
-            call.timeout_task = None
+        call.timeout_task = None
 
 
 call_service = CallService()

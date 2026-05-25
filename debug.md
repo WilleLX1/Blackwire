@@ -92,12 +92,12 @@ cd C:\projects\_other\Blackwire\client-cpp-gui
 
 Open Terminal A:
 ```bash
-./scripts/run.ps1 -Config Release -Profile alice
+./scripts/run.ps1 -Config Release -Profile alice -BaseUrl http://localhost:8000
 ```
 
 Open Terminal B:
 ```bash
-./scripts/run.ps1 -Config Release -Profile bob
+./scripts/run.ps1 -Config Release -Profile bob -BaseUrl http://localhost:8000
 ```
 
 

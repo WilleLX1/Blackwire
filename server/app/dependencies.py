@@ -10,7 +10,8 @@ from app.db import get_db_session
 from app.models.device import Device
 from app.models.user import User
 from app.security.tokens import TokenError, decode_token
-from app.security.tokens_v2 import TokenErrorV2, decode_token as decode_token_v2
+from app.security.tokens_v2 import TokenV2Error
+from app.security.tokens_v2 import decode_token as decode_token_v2
 
 bearer_scheme = HTTPBearer(auto_error=False)
 bootstrap_bearer_scheme = HTTPBearer(auto_error=False)
@@ -62,7 +63,7 @@ async def get_bootstrap_user_v2(
     token = credentials.credentials
     try:
         payload = decode_token_v2(token, expected_type="bootstrap")
-    except TokenErrorV2 as exc:
+    except TokenV2Error as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     user_id = payload.get("sub")
@@ -87,7 +88,7 @@ async def get_current_device_context_v2(
     token = credentials.credentials
     try:
         payload = decode_token_v2(token, expected_type="access")
-    except TokenErrorV2 as exc:
+    except TokenV2Error as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     user_id = payload.get("sub")

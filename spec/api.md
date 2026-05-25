@@ -3,7 +3,7 @@
 ## Versioning
 
 - Primary client integration surface: `/api/v2`
-- Legacy compatibility surface: `/api/v1` (kept operational in `v0.3` wave 1)
+- Legacy compatibility surface: `/api/v1` (still operational in `v0.4`)
 
 ---
 

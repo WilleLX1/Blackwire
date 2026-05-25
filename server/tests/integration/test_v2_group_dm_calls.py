@@ -29,7 +29,12 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _aggregate_chain_hash(sender_prev_hash: str, client_message_id: str, sent_at_ms: int, hash_material: list[str]) -> str:
+def _aggregate_chain_hash(
+    sender_prev_hash: str,
+    client_message_id: str,
+    sent_at_ms: int,
+    hash_material: list[str],
+) -> str:
     aggregate = _sha256_hex("|".join(sorted(hash_material)).encode("utf-8"))
     chain_data = "\n".join([sender_prev_hash, client_message_id, str(sent_at_ms), aggregate]).encode("utf-8")
     return _sha256_hex(chain_data)
@@ -77,7 +82,7 @@ def _new_device_material(label: str) -> dict[str, Any]:
     }
 
 
-def _register_v2_user(client: TestClient, username: str, password: str = "password123") -> dict[str, Any]:
+def _register_v2_user(client: TestClient, username: str, password: str = "Password123!") -> dict[str, Any]:
     response = client.post("/api/v2/auth/register", json={"username": username, "password": password})
     assert response.status_code == 201, response.text
     return response.json()
@@ -210,9 +215,13 @@ def test_v2_group_dm_no_prejoin_history(group_client: TestClient) -> None:
     bob_material = _new_device_material("bob-group-device")
     carol_material = _new_device_material("carol-group-device")
 
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
-    carol_tokens = _register_device_v2(group_client, carol_register["tokens"]["bootstrap_token"], carol_material)["tokens"]
+    carol_tokens = _register_device_v2(group_client, carol_register["tokens"]["bootstrap_token"], carol_material)[
+        "tokens"
+    ]
 
     create_group = group_client.post(
         "/api/v2/conversations/group",
@@ -320,7 +329,9 @@ def test_v2_group_call_offer_join_leave_end(group_client: TestClient) -> None:
     bob_register = _register_v2_user(group_client, "bob_group_call")
     alice_material = _new_device_material("alice-call-device")
     bob_material = _new_device_material("bob-call-device")
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
 
     create_group = group_client.post(
@@ -351,9 +362,11 @@ def test_v2_group_call_offer_join_leave_end(group_client: TestClient) -> None:
 
             active_state = _receive_until(
                 alice_ws,
-                lambda event: event.get("type") == "call.group.state"
-                and event.get("call_id") == call_id
-                and event.get("state") == "active",
+                lambda event: (
+                    event.get("type") == "call.group.state"
+                    and event.get("call_id") == call_id
+                    and event.get("state") == "active"
+                ),
             )
             assert active_state["group_uid"] == create_group.json()["group_uid"]
 
@@ -373,9 +386,11 @@ def test_v2_group_call_offer_join_leave_end(group_client: TestClient) -> None:
             bob_ws.send_json({"type": "call.offer", "conversation_id": conversation_id})
             bob_rejoin_state = _receive_until(
                 bob_ws,
-                lambda event: event.get("type") == "call.group.state"
-                and event.get("call_id") == call_id
-                and event.get("state") == "active",
+                lambda event: (
+                    event.get("type") == "call.group.state"
+                    and event.get("call_id") == call_id
+                    and event.get("state") == "active"
+                ),
             )
             assert bob_rejoin_state["group_uid"] == create_group.json()["group_uid"]
 
@@ -392,7 +407,9 @@ def test_v2_group_call_audio_local_forwarding(group_client: TestClient) -> None:
     bob_register = _register_v2_user(group_client, "bob_group_audio")
     alice_material = _new_device_material("alice-audio-device")
     bob_material = _new_device_material("bob-audio-device")
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
 
     create_group = group_client.post(
@@ -421,9 +438,11 @@ def test_v2_group_call_audio_local_forwarding(group_client: TestClient) -> None:
             bob_ws.send_json({"type": "call.accept", "call_id": call_id})
             _receive_until(
                 alice_ws,
-                lambda event: event.get("type") == "call.group.state"
-                and event.get("call_id") == call_id
-                and event.get("state") == "active",
+                lambda event: (
+                    event.get("type") == "call.group.state"
+                    and event.get("call_id") == call_id
+                    and event.get("state") == "active"
+                ),
             )
 
             pcm_b64 = _b64(b"\x00" * 320)
@@ -449,7 +468,9 @@ def test_v2_group_rename_pushes_ws_event_to_members(group_client: TestClient) ->
     alice_material = _new_device_material("alice-group-rename-device")
     bob_material = _new_device_material("bob-group-rename-device")
 
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
 
     create_group = group_client.post(
@@ -478,13 +499,17 @@ def test_v2_group_rename_pushes_ws_event_to_members(group_client: TestClient) ->
 
             alice_event = _receive_until(
                 alice_ws,
-                lambda event: event.get("type") == "conversation.group.renamed"
-                and event.get("conversation_id") == conversation_id,
+                lambda event: (
+                    event.get("type") == "conversation.group.renamed"
+                    and event.get("conversation_id") == conversation_id
+                ),
             )
             bob_event = _receive_until(
                 bob_ws,
-                lambda event: event.get("type") == "conversation.group.renamed"
-                and event.get("conversation_id") == conversation_id,
+                lambda event: (
+                    event.get("type") == "conversation.group.renamed"
+                    and event.get("conversation_id") == conversation_id
+                ),
             )
 
             assert alice_event["group_name"] == "After Rename"
@@ -502,7 +527,9 @@ def test_v2_group_create_skips_owner_alias_and_keeps_invite_capacity(group_clien
     bob_material = _new_device_material("bob-group-alias-device")
     carol_material = _new_device_material("carol-group-alias-device")
 
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)
     _register_device_v2(group_client, carol_register["tokens"]["bootstrap_token"], carol_material)
 
@@ -550,7 +577,9 @@ def test_v2_group_send_allows_sender_fallback_when_no_other_active_targets(group
     alice_material = _new_device_material("alice-group-fallback-device")
     bob_material = _new_device_material("bob-group-fallback-device")
 
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)
 
     create_group = group_client.post(
@@ -601,7 +630,9 @@ def test_v2_group_owner_leave_transfers_to_oldest_eligible_member(group_client: 
     bob_material = _new_device_material("bob-leave-owner-device")
     carol_material = _new_device_material("carol-leave-owner-device")
 
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
     _register_device_v2(group_client, carol_register["tokens"]["bootstrap_token"], carol_material)
 
@@ -658,7 +689,9 @@ def test_v2_group_owner_leave_promotes_oldest_invited_when_no_active_non_owner(g
     alice_material = _new_device_material("alice-leave-invited-device")
     bob_material = _new_device_material("bob-leave-invited-device")
 
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
     bob_tokens = _register_device_v2(group_client, bob_register["tokens"]["bootstrap_token"], bob_material)["tokens"]
 
     create_group = group_client.post(
@@ -692,7 +725,9 @@ def test_v2_group_owner_leave_promotes_oldest_invited_when_no_active_non_owner(g
 def test_v2_group_owner_leave_deletes_group_when_no_eligible_non_owner(group_client: TestClient) -> None:
     alice_register = _register_v2_user(group_client, "alice_leave_delete")
     alice_material = _new_device_material("alice-leave-delete-device")
-    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)["tokens"]
+    alice_tokens = _register_device_v2(group_client, alice_register["tokens"]["bootstrap_token"], alice_material)[
+        "tokens"
+    ]
 
     create_group = group_client.post(
         "/api/v2/conversations/group",

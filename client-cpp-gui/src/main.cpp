@@ -2,6 +2,8 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QLockFile>
+#include <QMessageBox>
 #include <QRegularExpression>
 #include <QStandardPaths>
 
@@ -56,9 +58,9 @@ int main(int argc, char* argv[]) {
     QCommandLineOption smoke_option(QStringList() << "smoke", "Run headless smoke flow and exit");
     QCommandLineOption base_url_option(
         QStringList() << "base-url",
-        "Base URL used by smoke mode",
+        "Base URL used by smoke mode and optional GUI profile override",
         "base-url",
-        "https://localhost:8000");
+        "http://localhost:8000");
     QCommandLineOption profile_option(
         QStringList() << "profile",
         "Local profile name used to isolate state and credentials",
@@ -83,6 +85,21 @@ int main(int argc, char* argv[]) {
     QDir().mkpath(state_dir);
     const auto state_path = QDir(state_dir).filePath("client_state.json").toStdString();
 
+    const QString profile_lock_path = QDir(state_dir).filePath(".profile.lock");
+    QLockFile profile_lock(profile_lock_path);
+    profile_lock.setStaleLockTime(0);
+    if (!profile_lock.tryLock(100)) {
+        QMessageBox::warning(
+            nullptr,
+            "Blackwire profile already open",
+            QString(
+                "The local profile '%1' is already open.\n\n"
+                "Start a second client with a different profile, for example:\n"
+                "scripts\\run.ps1 -Config Release -Profile bob")
+                .arg(profile_name));
+        return 1;
+    }
+
     blackwire::QtApiClient api_client;
     blackwire::QtWsClient ws_client;
     blackwire::QtAudioCallEngine audio_engine;
@@ -99,12 +116,11 @@ int main(int argc, char* argv[]) {
         state_store,
         profile_name);
     blackwire::MainWindow window(controller);
-    if (profile_name != "default") {
-        window.setWindowTitle(QString("Blackwire Client [%1]").arg(profile_name));
-    }
+    window.setWindowTitle(QString("Blackwire Client [%1]").arg(profile_name));
     window.show();
 
-    controller.Initialize();
+    const QString base_url_override = parser.isSet(base_url_option) ? parser.value(base_url_option) : QString();
+    controller.Initialize(base_url_override);
 
     return app.exec();
 }

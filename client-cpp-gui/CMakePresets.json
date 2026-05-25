@@ -8,7 +8,8 @@
       "binaryDir": "${sourceDir}/build/windows-debug",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "Z_VCPKG_POWERSHELL_PATH": "$env{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe"
       }
     },
     {

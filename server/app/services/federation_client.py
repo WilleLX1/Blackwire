@@ -46,8 +46,7 @@ class FederationClient:
         async with await self._build_http_client() as client:
             try:
                 response = await client.get(
-                    f"{base}{self.settings.api_prefix}/federation/users/"
-                    f"{quote(normalized_username, safe='')}/device"
+                    f"{base}{self.settings.api_prefix}/federation/users/{quote(normalized_username, safe='')}/device"
                 )
             except httpx.HTTPError as exc:
                 raise FederationClientError(
@@ -134,7 +133,9 @@ class FederationClient:
                     f"{base}/api/v2/federation/groups/{quote(normalized_group_uid, safe='')}/snapshot"
                 )
             except httpx.HTTPError as exc:
-                raise FederationClientError(502, f"Remote group snapshot lookup failed for {normalized_group_uid}") from exc
+                raise FederationClientError(
+                    502, f"Remote group snapshot lookup failed for {normalized_group_uid}"
+                ) from exc
 
         if response.status_code >= 400:
             raise FederationClientError(response.status_code, response.text or "Remote group snapshot failed")

@@ -250,7 +250,41 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    auto* split = new QSplitter(Qt::Horizontal, this);
+    auto* shell = new QWidget(this);
+    shell->setObjectName("appShell");
+    auto* shell_layout = new QHBoxLayout(shell);
+    shell_layout->setContentsMargins(0, 0, 0, 0);
+    shell_layout->setSpacing(0);
+
+    auto* server_rail = new QWidget(shell);
+    server_rail->setObjectName("serverRail");
+    server_rail->setFixedWidth(72);
+    auto* rail_layout = new QVBoxLayout(server_rail);
+    rail_layout->setContentsMargins(12, 12, 12, 12);
+    rail_layout->setSpacing(10);
+
+    auto* home_icon = new QLabel("B", server_rail);
+    home_icon->setObjectName("serverRailIcon");
+    home_icon->setAlignment(Qt::AlignCenter);
+    home_icon->setFixedSize(48, 48);
+    home_icon->setToolTip("Blackwire");
+    rail_layout->addWidget(home_icon, 0, Qt::AlignHCenter);
+
+    auto* rail_separator = new QWidget(server_rail);
+    rail_separator->setObjectName("serverRailSeparator");
+    rail_separator->setFixedSize(32, 2);
+    rail_layout->addWidget(rail_separator, 0, Qt::AlignHCenter);
+
+    auto* dm_icon = new QLabel("@", server_rail);
+    dm_icon->setObjectName("serverRailDmIcon");
+    dm_icon->setAlignment(Qt::AlignCenter);
+    dm_icon->setFixedSize(48, 48);
+    dm_icon->setToolTip("Direct messages");
+    rail_layout->addWidget(dm_icon, 0, Qt::AlignHCenter);
+    rail_layout->addStretch(1);
+    shell_layout->addWidget(server_rail);
+
+    auto* split = new QSplitter(Qt::Horizontal, shell);
     split->setChildrenCollapsible(false);
     split->setHandleWidth(1);
 
@@ -287,17 +321,11 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     peer_row->setContentsMargins(8, 0, 8, 0);
     peer_row->setSpacing(6);
     peer_input_ = new QLineEdit(sidebar);
+    peer_input_->setObjectName("peerSearchInput");
     peer_input_->setPlaceholderText("Find or start a conversation");
-    peer_input_->setStyleSheet(
-        "QLineEdit { background: #1e1f22; border-radius: 4px; padding: 6px 8px;"
-        " font-size: 13px; color: #949ba4; }");
     new_chat_button_ = new QPushButton("+", sidebar);
-    new_chat_button_->setObjectName("secondaryButton");
+    new_chat_button_->setObjectName("iconButton");
     new_chat_button_->setFixedSize(28, 28);
-    new_chat_button_->setStyleSheet(
-        "QPushButton { background: transparent; border: none; color: #b5bac1;"
-        " font-size: 18px; font-weight: 700; border-radius: 4px; padding: 0; }"
-        "QPushButton:hover { color: #dbdee1; background: #35373c; }");
     new_chat_button_->setToolTip("Open DM");
     peer_row->addWidget(peer_input_, 1);
     peer_row->addWidget(new_chat_button_);
@@ -318,11 +346,9 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     identity_layout->setSpacing(8);
 
     auto* identity_avatar = new QLabel("U", identity_card);
+    identity_avatar->setObjectName("identityAvatar");
     identity_avatar->setFixedSize(32, 32);
     identity_avatar->setAlignment(Qt::AlignCenter);
-    identity_avatar->setStyleSheet(
-        "background: #5865f2; border-radius: 16px; color: #ffffff;"
-        " font-size: 13px; font-weight: 600;");
     identity_layout->addWidget(identity_avatar);
 
     auto* identity_text_col = new QVBoxLayout();
@@ -334,20 +360,12 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     identity_layout->addLayout(identity_text_col, 1);
 
     copy_identity_button_ = new QPushButton("Copy", identity_card);
-    copy_identity_button_->setObjectName("secondaryButton");
+    copy_identity_button_->setObjectName("identityActionButton");
     copy_identity_button_->setEnabled(false);
     copy_identity_button_->setFixedHeight(24);
-    copy_identity_button_->setStyleSheet(
-        "QPushButton { background: transparent; border: none; color: #949ba4;"
-        " font-size: 12px; padding: 2px 6px; border-radius: 3px; }"
-        "QPushButton:hover { background: #35373c; color: #dbdee1; }");
     settings_button_ = new QPushButton("Settings", identity_card);
-    settings_button_->setObjectName("secondaryButton");
+    settings_button_->setObjectName("identityActionButton");
     settings_button_->setFixedHeight(24);
-    settings_button_->setStyleSheet(
-        "QPushButton { background: transparent; border: none; color: #949ba4;"
-        " font-size: 12px; padding: 2px 6px; border-radius: 3px; }"
-        "QPushButton:hover { background: #35373c; color: #dbdee1; }");
     identity_layout->addWidget(copy_identity_button_);
     identity_layout->addWidget(settings_button_);
     sidebar_layout->addWidget(identity_card);
@@ -367,7 +385,7 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     header_row->setSpacing(8);
 
     auto* channel_hash = new QLabel("@", content);
-    channel_hash->setStyleSheet("color: #949ba4; font-size: 20px; font-weight: 600; background: transparent;");
+    channel_hash->setObjectName("threadSymbol");
     channel_hash->setFixedWidth(20);
 
     thread_title_label_ = new QLineEdit("Select a conversation", content);
@@ -377,10 +395,14 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     thread_title_label_->setFocusPolicy(Qt::NoFocus);
     thread_title_label_->setCursor(Qt::ArrowCursor);
 
+    thread_context_label_ = new QLabel(content);
+    thread_context_label_->setObjectName("threadContext");
+    thread_context_label_->setVisible(false);
+
     /* Divider between title and actions */
     auto* header_divider = new QWidget(content);
+    header_divider->setObjectName("headerDivider");
     header_divider->setFixedSize(1, 24);
-    header_divider->setStyleSheet("background: #3f4147;");
 
     call_button_ = new QPushButton("Call", content);
     call_button_->setObjectName("primaryButton");
@@ -404,6 +426,7 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
 
     header_row->addWidget(channel_hash);
     header_row->addWidget(thread_title_label_, 1);
+    header_row->addWidget(thread_context_label_);
     header_row->addWidget(header_divider);
     header_row->addWidget(call_button_);
     header_row->addWidget(group_button_);
@@ -509,7 +532,7 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     compose_outer->setSpacing(0);
 
     auto* compose_bar = new QWidget(compose_container);
-    compose_bar->setStyleSheet("background: #383a40; border-radius: 8px;");
+    compose_bar->setObjectName("composeBar");
     auto* compose_row = new QHBoxLayout(compose_bar);
     compose_row->setContentsMargins(4, 4, 4, 4);
     compose_row->setSpacing(4);
@@ -521,12 +544,8 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
     compose_input_->installEventFilter(this);
 
     attach_button_ = new QPushButton("+", compose_bar);
-    attach_button_->setObjectName("secondaryButton");
+    attach_button_->setObjectName("composeIconButton");
     attach_button_->setFixedSize(32, 32);
-    attach_button_->setStyleSheet(
-        "QPushButton { background: transparent; border: none; color: #b5bac1;"
-        " font-size: 20px; font-weight: 700; border-radius: 4px; padding: 0; }"
-        "QPushButton:hover { color: #dbdee1; background: #4e5058; }");
     send_button_ = new QPushButton("Send", compose_bar);
     send_button_->setObjectName("primaryButton");
     send_button_->setEnabled(false);
@@ -560,7 +579,8 @@ ChatWidget::ChatWidget(QWidget* parent) : QWidget(parent) {
 
     split->setStretchFactor(0, 0);
     split->setStretchFactor(1, 1);
-    root->addWidget(split, 1);
+    shell_layout->addWidget(split, 1);
+    root->addWidget(shell, 1);
 
     banner_timer_ = new QTimer(this);
     banner_timer_->setSingleShot(true);
@@ -1252,6 +1272,8 @@ void ChatWidget::UpdateThreadHeader() {
         thread_title_label_->setFocusPolicy(Qt::NoFocus);
         thread_title_label_->setCursor(Qt::ArrowCursor);
         thread_title_label_->setToolTip({});
+        thread_context_label_->clear();
+        thread_context_label_->setVisible(false);
         if (typing_indicator_label_ != nullptr) {
             typing_indicator_label_->clear();
             typing_indicator_label_->setVisible(false);
@@ -1265,6 +1287,8 @@ void ChatWidget::UpdateThreadHeader() {
         thread_title_label_->setFocusPolicy(Qt::NoFocus);
         thread_title_label_->setCursor(Qt::ArrowCursor);
         thread_title_label_->setToolTip({});
+        thread_context_label_->clear();
+        thread_context_label_->setVisible(false);
         empty_state_label_->setText("Select a conversation to start chatting.");
         if (typing_indicator_label_ != nullptr) {
             typing_indicator_label_->clear();
@@ -1278,6 +1302,21 @@ void ChatWidget::UpdateThreadHeader() {
     const QString conversation_type = selected->data(kRoleConversationType).toString().trimmed().toLower();
     const bool can_manage_members = selected->data(kRoleCanManageMembers).toBool();
     const bool owner_group = conversation_type == "group" && can_manage_members;
+    QString context_text;
+    if (conversation_type == "group") {
+        const int member_count = selected->data(kRoleMemberCount).toInt();
+        context_text = member_count > 0 ? QString("Group DM - %1 members").arg(member_count) : "Group DM";
+        if (can_manage_members) {
+            context_text += " - owner";
+        }
+    } else {
+        context_text = selected->data(kRolePeerAddress).toString().trimmed();
+        if (context_text.isEmpty()) {
+            context_text = "Direct message";
+        }
+    }
+    thread_context_label_->setText(context_text);
+    thread_context_label_->setVisible(!context_text.isEmpty());
     thread_title_label_->setReadOnly(!owner_group);
     thread_title_label_->setFocusPolicy(owner_group ? Qt::ClickFocus : Qt::NoFocus);
     thread_title_label_->setCursor(owner_group ? Qt::IBeamCursor : Qt::ArrowCursor);

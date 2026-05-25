@@ -13,7 +13,12 @@ from app.models.conversation import Conversation
 from app.models.conversation_member import ConversationMember
 from app.models.group_membership_event import GroupMembershipEvent
 from app.models.user import User
-from app.schemas.v2_conversation import ConversationMemberOutV2, ConversationOutV2, ConversationRecipientsOutV2
+from app.schemas.v2_conversation import (
+    ConversationMemberOutV2,
+    ConversationOutV2,
+    ConversationRecipientDeviceOutV2,
+    ConversationRecipientsOutV2,
+)
 from app.schemas.v2_device import DeviceOutV2
 from app.schemas.v2_federation import FederationGroupEventRequestV2, FederationGroupSnapshotOutV2
 from app.services.device_service_v2 import device_service_v2
@@ -110,10 +115,10 @@ class GroupConversationService:
             return
 
         now = datetime.now(UTC)
-        member_user_id: str | None = None
+        owner_member_user_id: str | None = None
         member_server_onion = ""
         try:
-            member_user_id, member_server_onion = await self._resolve_member_user_id(
+            owner_member_user_id, member_server_onion = await self._resolve_member_user_id(
                 session,
                 owner_address,
             )
@@ -127,7 +132,7 @@ class GroupConversationService:
         session.add(
             ConversationMember(
                 conversation_id=conversation.id,
-                member_user_id=member_user_id,
+                member_user_id=owner_member_user_id,
                 member_address=owner_address,
                 member_server_onion=member_server_onion,
                 role="owner",
@@ -246,7 +251,9 @@ class GroupConversationService:
                 ConversationMember.conversation_id == conversation_id,
                 ConversationMember.member_user_id == user_id,
             )
-            .order_by(ConversationMember.role.desc(), ConversationMember.status.asc(), ConversationMember.updated_at.desc())
+            .order_by(
+                ConversationMember.role.desc(), ConversationMember.status.asc(), ConversationMember.updated_at.desc()
+            )
         )
         return (await session.execute(stmt)).scalars().first()
 
@@ -755,7 +762,9 @@ class GroupConversationService:
         await metrics.inc("groups.left")
         return member
 
-    async def rename(self, session: AsyncSession, *, conversation: Conversation, owner: User, name: str) -> Conversation:
+    async def rename(
+        self, session: AsyncSession, *, conversation: Conversation, owner: User, name: str
+    ) -> Conversation:
         await self.ensure_owner(session, conversation, owner.id)
         conversation.group_name = self._normalize_name(name)
         now = datetime.now(UTC)
@@ -766,7 +775,11 @@ class GroupConversationService:
             event_type="rename",
             actor_address=actor_address,
             target_address="",
-            payload={"conversation_id": conversation.id, "group_uid": conversation.group_uid, "group_name": conversation.group_name},
+            payload={
+                "conversation_id": conversation.id,
+                "group_uid": conversation.group_uid,
+                "group_name": conversation.group_name,
+            },
             created_at=now,
         )
         await self._broadcast_events(session, conversation, [event])
@@ -780,7 +793,9 @@ class GroupConversationService:
         await metrics.inc("groups.rename")
         return conversation
 
-    async def accept_invite(self, session: AsyncSession, *, conversation: Conversation, user: User) -> ConversationMember:
+    async def accept_invite(
+        self, session: AsyncSession, *, conversation: Conversation, user: User
+    ) -> ConversationMember:
         member = await self.ensure_member_access(session, conversation, user.id, require_active=False)
         actor_address = server_address_for_username(user.username)
         now = datetime.now(UTC)
@@ -795,7 +810,11 @@ class GroupConversationService:
                 event_type="accept",
                 actor_address=actor_address,
                 target_address=actor_address,
-                payload={"conversation_id": conversation.id, "group_uid": conversation.group_uid, "member_address": actor_address},
+                payload={
+                    "conversation_id": conversation.id,
+                    "group_uid": conversation.group_uid,
+                    "member_address": actor_address,
+                },
                 created_at=now,
             )
             await self._broadcast_events(session, conversation, [event])
@@ -827,7 +846,7 @@ class GroupConversationService:
     ) -> ConversationRecipientsOutV2:
         await self.ensure_member_access(session, conversation, user.id, require_active=True)
         members = await self._members_for_conversation(session, conversation.id)
-        recipients = []
+        recipients: list[ConversationRecipientDeviceOutV2] = []
         for member in members:
             if member.status != "active":
                 continue
@@ -838,16 +857,20 @@ class GroupConversationService:
                 if member.member_user_id == user.id and current_device_uid and device.device_uid == current_device_uid:
                     continue
                 recipients.append(
-                    {
-                        "member_address": member.member_address,
-                        "member_status": "active",
-                        "device": DeviceOutV2.model_validate(device),
-                        "prekey": None,
-                    }
+                    ConversationRecipientDeviceOutV2(
+                        member_address=member.member_address,
+                        member_status="active",
+                        device=DeviceOutV2.model_validate(device),
+                        prekey=None,
+                    )
                 )
-        return ConversationRecipientsOutV2(conversation_id=conversation.id, conversation_type="group", recipients=recipients)
+        return ConversationRecipientsOutV2(
+            conversation_id=conversation.id, conversation_type="group", recipients=recipients
+        )
 
-    async def to_conversation_out(self, session: AsyncSession, *, conversation: Conversation, user: User) -> ConversationOutV2:
+    async def to_conversation_out(
+        self, session: AsyncSession, *, conversation: Conversation, user: User
+    ) -> ConversationOutV2:
         members = await self._members_for_conversation(session, conversation.id)
         member = next((row for row in members if row.member_user_id == user.id), None)
         member_count_keys: set[str] = set()
@@ -876,7 +899,9 @@ class GroupConversationService:
         )
 
     async def get_group_by_uid(self, session: AsyncSession, group_uid: str) -> Conversation | None:
-        stmt = select(Conversation).where(Conversation.group_uid == group_uid, Conversation.conversation_type == "group")
+        stmt = select(Conversation).where(
+            Conversation.group_uid == group_uid, Conversation.conversation_type == "group"
+        )
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def _apply_snapshot(self, session: AsyncSession, snapshot: FederationGroupSnapshotOutV2) -> Conversation:
@@ -923,8 +948,12 @@ class GroupConversationService:
                     status=str(member_payload.get("status", "invited")),
                     invited_by_address=str(member_payload.get("invited_by_address", "")),
                     invited_at=invited_at,
-                    joined_at=None if not joined_at_raw else datetime.fromisoformat(str(joined_at_raw).replace("Z", "+00:00")),
-                    left_at=None if not left_at_raw else datetime.fromisoformat(str(left_at_raw).replace("Z", "+00:00")),
+                    joined_at=None
+                    if not joined_at_raw
+                    else datetime.fromisoformat(str(joined_at_raw).replace("Z", "+00:00")),
+                    left_at=None
+                    if not left_at_raw
+                    else datetime.fromisoformat(str(left_at_raw).replace("Z", "+00:00")),
                     updated_at=datetime.fromisoformat(updated_at_raw.replace("Z", "+00:00")),
                 )
             )
@@ -949,7 +978,9 @@ class GroupConversationService:
         if conversation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
         members = await self._members_for_conversation(session, conversation.id)
-        latest_stmt = select(func.max(GroupMembershipEvent.event_seq)).where(GroupMembershipEvent.group_uid == group_uid)
+        latest_stmt = select(func.max(GroupMembershipEvent.event_seq)).where(
+            GroupMembershipEvent.group_uid == group_uid
+        )
         latest = int((await session.execute(latest_stmt)).scalar_one_or_none() or 0)
         payload_members = [
             {
@@ -1023,20 +1054,28 @@ class GroupConversationService:
         created_at = datetime.fromisoformat(payload.created_at.replace("Z", "+00:00"))
         if payload.event_type == "create":
             conversation.group_name = str(payload.payload.get("group_name", conversation.group_name))
-            conversation.origin_server_onion = str(payload.payload.get("origin_server_onion", conversation.origin_server_onion))
-            conversation.owner_address = str(payload.payload.get("owner_address", conversation.owner_address or payload.actor_address))
+            conversation.origin_server_onion = str(
+                payload.payload.get("origin_server_onion", conversation.origin_server_onion)
+            )
+            conversation.owner_address = str(
+                payload.payload.get("owner_address", conversation.owner_address or payload.actor_address)
+            )
         if payload.event_type == "rename":
             conversation.group_name = str(payload.payload.get("group_name", conversation.group_name))
         elif payload.event_type == "transfer_owner":
             prior_owner_raw = (
                 str(payload.payload.get("previous_owner_address", payload.actor_address or "")).strip().lower()
             )
-            next_owner_raw = str(
-                payload.payload.get("owner_address")
-                or payload.target_address
-                or payload.payload.get("member_address")
-                or ""
-            ).strip().lower()
+            next_owner_raw = (
+                str(
+                    payload.payload.get("owner_address")
+                    or payload.target_address
+                    or payload.payload.get("member_address")
+                    or ""
+                )
+                .strip()
+                .lower()
+            )
             if next_owner_raw:
                 parsed_next_owner = parse_peer_address_with_policy(next_owner_raw, self.settings.tor_enabled)
                 conversation.owner_address = parsed_next_owner.canonical
@@ -1145,7 +1184,9 @@ class GroupConversationService:
                 event_seq=payload.event_seq,
             )
 
-    async def accept_remote_invite_to_origin(self, session: AsyncSession, *, group_uid: str, actor_address: str) -> None:
+    async def accept_remote_invite_to_origin(
+        self, session: AsyncSession, *, group_uid: str, actor_address: str
+    ) -> None:
         conversation = await self.get_group_by_uid(session, group_uid)
         if conversation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
@@ -1167,7 +1208,11 @@ class GroupConversationService:
             event_type="accept",
             actor_address=actor_address,
             target_address=actor_address,
-            payload={"conversation_id": conversation.id, "group_uid": conversation.group_uid, "member_address": actor_address},
+            payload={
+                "conversation_id": conversation.id,
+                "group_uid": conversation.group_uid,
+                "member_address": actor_address,
+            },
             created_at=now,
         )
         await self._broadcast_events(session, conversation, [event])

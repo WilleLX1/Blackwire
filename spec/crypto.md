@@ -1,8 +1,9 @@
-# Blackwire v0.1 Crypto Spec
+# Blackwire v0.4 Crypto Spec
 
 ## Scope
 
-v0.1 uses client-side sealed-box encryption for direct messages. The server stores and forwards ciphertext only.
+Blackwire currently uses client-side sealed-box encryption as the stable message baseline.
+The server stores and forwards ciphertext only.
 
 ## Algorithm
 
@@ -31,7 +32,7 @@ Private keys remain local on the client.
 }
 ```
 
-Server validation in v0.1:
+Server validation for sealed-box messages:
 - `alg` is exactly `libsodium-sealedbox-v1`.
 - Base64 format checks for ciphertext/AAD.
 - Ciphertext and AAD byte-size caps.
@@ -42,4 +43,4 @@ Server validation in v0.1:
 - No plaintext message fields are stored server-side.
 - Server does not decrypt, inspect, or transform ciphertext.
 - Delivery is at-least-once; clients must deduplicate by message id.
-- v0.1 is not a full Noise/Double Ratchet deployment.
+- The ratchet protocol scaffolding exists, but full Noise/Double Ratchet migration is still phased.

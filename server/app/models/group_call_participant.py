@@ -9,9 +9,7 @@ from app.models.base import Base
 
 class GroupCallParticipant(Base):
     __tablename__ = "group_call_participants"
-    __table_args__ = (
-        UniqueConstraint("call_id", "member_address", name="uq_group_call_participant_address"),
-    )
+    __table_args__ = (UniqueConstraint("call_id", "member_address", name="uq_group_call_participant_address"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     call_id: Mapped[str] = mapped_column(

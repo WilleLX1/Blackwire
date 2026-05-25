@@ -18,7 +18,7 @@ ClientState StateStore::Load() const {
     std::ifstream input(path_);
     if (!input.good()) {
         ClientState state;
-        state.base_url = "https://localhost:8000";
+        state.base_url = "http://localhost:8000";
         return state;
     }
 

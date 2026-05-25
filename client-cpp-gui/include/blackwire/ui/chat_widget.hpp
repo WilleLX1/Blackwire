@@ -122,6 +122,7 @@ private:
     QLabel* banner_label_;
     QLabel* typing_indicator_label_;
     QLineEdit* thread_title_label_;
+    QLabel* thread_context_label_;
     QLabel* empty_state_label_;
     QTimer* banner_timer_;
     QTimer* typing_idle_timer_;

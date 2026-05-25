@@ -9,9 +9,7 @@ from app.models.base import Base
 
 class FederationNonceReplay(Base):
     __tablename__ = "federation_nonce_replay"
-    __table_args__ = (
-        UniqueConstraint("peer_onion", "nonce", name="uq_federation_peer_nonce"),
-    )
+    __table_args__ = (UniqueConstraint("peer_onion", "nonce", name="uq_federation_peer_nonce"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     peer_onion: Mapped[str] = mapped_column(String(255), index=True)

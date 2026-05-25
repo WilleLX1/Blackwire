@@ -31,7 +31,7 @@ from app.services.federation_client import FederationClientError, federation_cli
 from app.services.metrics import metrics
 from app.services.peer_address import parse_peer_address_with_policy
 from app.services.server_authority import is_local_server_authority
-from app.services.server_identity import get_server_onion, server_address_for_username
+from app.services.server_identity import server_address_for_username
 from app.ws.manager import connection_manager
 
 
@@ -143,7 +143,9 @@ class GroupCallService:
         await self._require_enabled()
         caller = await self._user(session, caller_user_id)
         caller_address = server_address_for_username(caller.username)
-        conversation = (await session.execute(select(Conversation).where(Conversation.id == conversation_id))).scalar_one_or_none()
+        conversation = (
+            await session.execute(select(Conversation).where(Conversation.id == conversation_id))
+        ).scalar_one_or_none()
         if conversation is None or conversation.conversation_type != "group":
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group conversation not found")
         member_rows = list(
@@ -160,7 +162,9 @@ class GroupCallService:
         if caller_member is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a group member")
         if len(member_rows) > self.settings.group_call_max_participants:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Too many active group members for mesh call")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Too many active group members for mesh call"
+            )
 
         existing_call = (
             await session.execute(
@@ -389,7 +393,9 @@ class GroupCallService:
         row.last_signal_at = now
         participants = await self._participants(session, call.call_id)
         active_remaining = [
-            item for item in participants if item.member_address != address and item.state in {"joined", "ringing", "offline_pending"}
+            item
+            for item in participants
+            if item.member_address != address and item.state in {"joined", "ringing", "offline_pending"}
         ]
         if not active_remaining:
             call.state = "ended"
@@ -592,10 +598,14 @@ class GroupCallService:
 
     async def relay_offer(self, session: AsyncSession, payload: FederationGroupCallOfferRequestV2) -> None:
         await self._require_enabled()
-        existing = (await session.execute(select(GroupCallSession).where(GroupCallSession.call_id == payload.call_id))).scalar_one_or_none()
+        existing = (
+            await session.execute(select(GroupCallSession).where(GroupCallSession.call_id == payload.call_id))
+        ).scalar_one_or_none()
         if existing is not None:
             return
-        conversation = (await session.execute(select(Conversation).where(Conversation.group_uid == payload.group_uid))).scalar_one_or_none()
+        conversation = (
+            await session.execute(select(Conversation).where(Conversation.group_uid == payload.group_uid))
+        ).scalar_one_or_none()
         if conversation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
         parsed = parse_peer_address_with_policy(payload.from_user_address, self.settings.tor_enabled)
@@ -623,7 +633,11 @@ class GroupCallService:
         )
         for member in members:
             state_value = "joined" if member.member_address == payload.from_user_address else "ringing"
-            if member.member_user_id and state_value == "ringing" and not await connection_manager.has_user(member.member_user_id):
+            if (
+                member.member_user_id
+                and state_value == "ringing"
+                and not await connection_manager.has_user(member.member_user_id)
+            ):
                 state_value = "offline_pending"
             session.add(
                 GroupCallParticipant(
@@ -688,7 +702,11 @@ class GroupCallService:
         participant.state = "left"
         participant.left_at = datetime.now(UTC)
         participants = await self._participants(session, call.call_id)
-        remaining = [row for row in participants if row.member_address != payload.member_address and row.state in {"joined", "ringing", "offline_pending"}]
+        remaining = [
+            row
+            for row in participants
+            if row.member_address != payload.member_address and row.state in {"joined", "ringing", "offline_pending"}
+        ]
         if not remaining:
             call.state = "ended"
             call.ended_at = datetime.now(UTC)
@@ -726,7 +744,9 @@ class GroupCallService:
         try:
             pcm = base64.b64decode(payload.pcm_b64.encode("utf-8"), validate=True)
         except binascii.Error as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid audio payload encoding") from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid audio payload encoding"
+            ) from exc
         if not pcm:
             return
         if len(pcm) > self.settings.voice_audio_max_chunk_bytes:
@@ -756,18 +776,17 @@ class GroupCallService:
             return
         self._audio_last_at[rate_key] = now_mono
 
-        recipients = list(
-            (
-                await session.execute(
-                    select(GroupCallParticipant.local_user_id).where(
-                        GroupCallParticipant.call_id == call.call_id,
-                        GroupCallParticipant.state == "joined",
-                        GroupCallParticipant.member_address != sender_address,
-                        GroupCallParticipant.local_user_id.is_not(None),
-                    )
-                )
-            ).scalars()
+        recipient_result = await session.execute(
+            select(GroupCallParticipant.local_user_id).where(
+                GroupCallParticipant.call_id == call.call_id,
+                GroupCallParticipant.state == "joined",
+                GroupCallParticipant.member_address != sender_address,
+                GroupCallParticipant.local_user_id.is_not(None),
+            )
         )
+        recipient_ids = [
+            recipient_user_id for recipient_user_id in recipient_result.scalars() if recipient_user_id is not None
+        ]
         out_payload = {
             "type": "call.audio",
             "call_id": call.call_id,
@@ -776,9 +795,12 @@ class GroupCallService:
             "sequence": payload.sequence,
             "pcm_b64": payload.pcm_b64,
         }
-        if recipients:
+        if recipient_ids:
             await asyncio.gather(
-                *(connection_manager.send_to_user(recipient_user_id, out_payload) for recipient_user_id in recipients),
+                *(
+                    connection_manager.send_to_user(recipient_user_id, out_payload)
+                    for recipient_user_id in recipient_ids
+                ),
                 return_exceptions=True,
             )
 
@@ -827,7 +849,9 @@ class GroupCallService:
             },
         )
 
-    async def relay_webrtc_answer(self, session: AsyncSession, payload: FederationGroupCallWebRtcAnswerRequestV2) -> None:
+    async def relay_webrtc_answer(
+        self, session: AsyncSession, payload: FederationGroupCallWebRtcAnswerRequestV2
+    ) -> None:
         await self._relay_webrtc_to_local_target(
             session,
             call_id=payload.call_id,

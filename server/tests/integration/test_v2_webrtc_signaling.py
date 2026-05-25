@@ -25,7 +25,7 @@ def _new_device_material(label: str) -> dict[str, Any]:
 
 
 def _register_user_v2(client, username: str) -> dict[str, Any]:
-    response = client.post("/api/v2/auth/register", json={"username": username, "password": "password123"})
+    response = client.post("/api/v2/auth/register", json={"username": username, "password": "Password123!"})
     assert response.status_code == 201, response.text
     return response.json()
 

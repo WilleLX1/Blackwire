@@ -28,7 +28,7 @@ void ApplyAppTheme(QApplication& app) {
     palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
     app.setPalette(palette);
 
-    const QString qss = R"(
+    const QString qss = QStringLiteral(R"(
 
 /* ── Global ───────────────────────────────────────────────── */
 QWidget {
@@ -48,6 +48,47 @@ QStatusBar {
     border-top: 1px solid #1e1f22;
     font-size: 12px;
     padding: 2px 8px;
+}
+
+QWidget#appShell {
+    background: #313338;
+}
+
+QWidget#serverRail {
+    background: #1e1f22;
+    border-right: 1px solid #17181b;
+}
+
+QLabel#serverRailIcon {
+    background: #5865f2;
+    color: #ffffff;
+    border-radius: 18px;
+    font-size: 22px;
+    font-weight: 800;
+}
+
+QLabel#serverRailIcon:hover {
+    background: #4752c4;
+    border-radius: 14px;
+}
+
+QLabel#serverRailDmIcon {
+    background: #2b2d31;
+    color: #dbdee1;
+    border-radius: 24px;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#serverRailDmIcon:hover {
+    background: #23a55a;
+    color: #ffffff;
+    border-radius: 16px;
+}
+
+QWidget#serverRailSeparator {
+    background: #35373c;
+    border-radius: 1px;
 }
 
 /* ── Scrollbars (Discord-thin) ────────────────────────────── */
@@ -92,12 +133,16 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
 /* ── Inputs ───────────────────────────────────────────────── */
 QLineEdit, QPlainTextEdit, QListWidget, QComboBox {
     background: #1e1f22;
-    border: none;
-    border-radius: 8px;
+    border: 1px solid #1e1f22;
+    border-radius: 5px;
     color: #dbdee1;
     selection-background-color: #5865f2;
     padding: 8px 12px;
     font-size: 14px;
+}
+
+QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover {
+    border-color: #111214;
 }
 
 QComboBox#statusCombo {
@@ -108,7 +153,22 @@ QComboBox#statusCombo {
 }
 
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
+    border: 1px solid #5865f2;
+    background: #1b1c1f;
     outline: none;
+}
+
+QLineEdit#peerSearchInput {
+    background: #1e1f22;
+    border: 1px solid #1e1f22;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: #dbdee1;
+}
+
+QLineEdit#peerSearchInput::placeholder {
+    color: #949ba4;
 }
 
 QComboBox::drop-down {
@@ -125,17 +185,28 @@ QComboBox QAbstractItemView {
 
 /* ── Compose input (Discord chat bar) ─────────────────────── */
 QPlainTextEdit#composeInput {
-    background: #383a40;
+    background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     color: #dbdee1;
-    padding: 10px 16px;
+    padding: 8px 10px;
     font-size: 14px;
+}
+
+QPlainTextEdit#composeInput:focus {
+    border: none;
+    background: transparent;
+}
+
+QWidget#composeBar {
+    background: #383a40;
+    border: 1px solid #383a40;
+    border-radius: 8px;
 }
 
 /* ── Buttons ──────────────────────────────────────────────── */
 QPushButton {
-    border-radius: 3px;
+    border-radius: 5px;
     padding: 7px 16px;
     background: #4e5058;
     color: #ffffff;
@@ -195,10 +266,57 @@ QPushButton#dangerButton:hover {
     background: #a12d31;
 }
 
+QPushButton#iconButton, QPushButton#composeIconButton {
+    background: transparent;
+    border: none;
+    color: #b5bac1;
+    border-radius: 5px;
+    padding: 0;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QPushButton#iconButton:hover, QPushButton#composeIconButton:hover {
+    background: #35373c;
+    color: #dbdee1;
+}
+
+QPushButton#composeIconButton {
+    font-size: 20px;
+}
+
+QPushButton#identityActionButton {
+    background: transparent;
+    border: none;
+    color: #949ba4;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+QPushButton#identityActionButton:hover {
+    background: #35373c;
+    color: #dbdee1;
+}
+
+QPushButton#linkButton {
+    background: transparent;
+    border: none;
+    color: #00a8fc;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 0;
+}
+
+QPushButton#linkButton:hover {
+    color: #45b6ff;
+    text-decoration: underline;
+}
+
 /* ── DM Sidebar (Discord channels pane) ───────────────────── */
 QWidget#dmSidebar {
     background: #2b2d31;
-    border-right: none;
+    border-right: 1px solid #232428;
 }
 
 QWidget#settingsSidebar {
@@ -266,6 +384,14 @@ QLabel#identityLabel {
     font-size: 12px;
 }
 
+QLabel#identityAvatar {
+    background: #5865f2;
+    border-radius: 16px;
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+}
+
 /* ── Chat pane ────────────────────────────────────────────── */
 QWidget#chatPane {
     background: #313338;
@@ -275,6 +401,17 @@ QWidget#chatPane {
 QWidget#chatHeaderBar {
     background: #313338;
     border-bottom: 1px solid #232428;
+}
+
+QLabel#threadSymbol {
+    color: #949ba4;
+    font-size: 20px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QWidget#headerDivider {
+    background: #3f4147;
 }
 
 QLabel#threadTitle, QLineEdit#threadTitle {
@@ -290,6 +427,15 @@ QLabel#threadTitle, QLineEdit#threadTitle {
 QLineEdit#threadTitle:focus {
     border: 1px solid #5865f2;
     background: #1e1f22;
+}
+
+QLabel#threadContext {
+    color: #949ba4;
+    background: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 0 4px;
 }
 
 /* ── Connection / status pills ────────────────────────────── */
@@ -349,7 +495,7 @@ QLabel#callStatusPill[state="error"] {
 QWidget#callPanel {
     background: #2b2d31;
     border: 1px solid #1e1f22;
-    border-radius: 8px;
+    border-radius: 6px;
 }
 
 QWidget#callPanel[state="ringing"] {
@@ -427,6 +573,9 @@ QLabel#chatBanner[severity="error"] {
     background: #da373c;
 }
 
+)")
+        + QStringLiteral(R"(
+
 /* ── Conversation list (Discord DM list) ──────────────────── */
 QListWidget#conversationList {
     background: #2b2d31;
@@ -469,7 +618,7 @@ QListWidget#contactsList::item:selected {
 /* ── Conversation row widget ──────────────────────────────── */
 QWidget#conversationRow {
     background: transparent;
-    border-radius: 4px;
+    border-radius: 5px;
 }
 
 QWidget#conversationRow[selected="true"] {
@@ -490,7 +639,7 @@ QLabel#conversationAvatar {
 
 QLabel#conversationTitle {
     color: #f2f3f5;
-    font-weight: 500;
+    font-weight: 600;
     font-size: 14px;
 }
 
@@ -590,6 +739,9 @@ QLabel#messageAvatar[grouped="true"] {
     color: transparent;
 }
 
+)")
+        + QStringLiteral(R"(
+
 /* No bubble -- flat Discord-style messages */
 QWidget#messageBubble {
     border-radius: 0;
@@ -617,6 +769,7 @@ QLabel#messageMeta {
 QLabel#messageBody {
     color: #dbdee1;
     font-size: 14px;
+    line-height: 1.35;
 }
 
 /* ── System messages ──────────────────────────────────────── */
@@ -641,9 +794,13 @@ QLabel#systemMessageText {
 
 /* ── Empty state ──────────────────────────────────────────── */
 QLabel#chatEmptyState {
-    color: #949ba4;
-    font-size: 16px;
+    color: #b5bac1;
+    font-size: 17px;
+    font-weight: 500;
 }
+
+)")
+        + QStringLiteral(R"(
 
 /* ── Audio meter ──────────────────────────────────────────── */
 QProgressBar#audioLevelMeter {
@@ -680,19 +837,68 @@ QToolTip {
 /* ── Login card ───────────────────────────────────────────── */
 QWidget#loginCard {
     background: #2b2d31;
-    border-radius: 6px;
+    border-radius: 8px;
+    border: 1px solid #232428;
+}
+
+QWidget#loginShell {
+    background: #313338;
+}
+
+QStackedWidget#loginPageStack {
+    background: transparent;
     border: none;
+}
+
+QLabel#loginLogo {
+    background: #5865f2;
+    color: #ffffff;
+    border-radius: 22px;
+    font-size: 30px;
+    font-weight: 800;
 }
 
 QLabel#loginTitle {
     color: #f2f3f5;
-    font-size: 24px;
-    font-weight: 600;
+    font-size: 26px;
+    font-weight: 700;
 }
 
 QLabel#loginSubtitle {
     color: #949ba4;
     font-size: 14px;
+}
+
+QLabel#loginHint {
+    color: #949ba4;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+QLabel#serverInfoPanel {
+    background: #1e1f22;
+    border: 1px solid #232428;
+    border-radius: 6px;
+    color: #b5bac1;
+    font-size: 12px;
+    line-height: 1.3;
+    min-height: 126px;
+    padding: 10px 12px;
+}
+
+QLabel#serverInfoPanel[state="ok"] {
+    border-color: #248046;
+    color: #dbdee1;
+}
+
+QLabel#serverInfoPanel[state="loading"] {
+    border-color: #4e5058;
+    color: #949ba4;
+}
+
+QLabel#serverInfoPanel[state="error"] {
+    border-color: #da373c;
+    color: #f2b8b5;
 }
 
 QLabel#loginFieldLabel {
@@ -701,7 +907,7 @@ QLabel#loginFieldLabel {
     font-weight: 700;
     text-transform: uppercase;
 }
-)";
+)");
 
     app.setStyleSheet(qss);
 }

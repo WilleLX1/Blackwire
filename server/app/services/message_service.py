@@ -141,9 +141,7 @@ class MessageService:
                 "client_message_id": payload.envelope.client_message_id,
                 "envelope": payload.envelope.model_dump(),
             }
-            dedupe_key = (
-                f"message:{sender_device.id}:{payload.envelope.client_message_id}:{conversation.peer_address}"
-            )
+            dedupe_key = f"message:{sender_device.id}:{payload.envelope.client_message_id}:{conversation.peer_address}"
             outbox_item = await federation_outbox_service.enqueue(
                 session,
                 peer_onion=conversation.peer_server_onion,

@@ -3,12 +3,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import client_rate_limit_key
 from app.dependencies import AuthenticatedDeviceContextV2, db_session, get_current_device_context_v2
+from app.models.conversation import Conversation
 from app.schemas.v2_conversation import (
+    ConversationMemberOutV2,
+    ConversationOutV2,
     ConversationReadCursorOutV2,
     ConversationReadRequestV2,
     ConversationReadStateOutV2,
-    ConversationMemberOutV2,
-    ConversationOutV2,
     ConversationRecipientsOutV2,
     ConversationTypingRequestV2,
     ConversationTypingResponseV2,
@@ -22,8 +23,8 @@ from app.schemas.v2_message import MessageDeviceCopyOutV2, MessageEventOutV2
 from app.services.conversation_service import conversation_service
 from app.services.group_conversation_service import group_conversation_service
 from app.services.message_service_v2 import message_service_v2
-from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.rate_limit import rate_limiter
+from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.typing_service_v2 import typing_service_v2
 
 router = APIRouter(prefix="/api/v2/conversations", tags=["conversations-v2"])
@@ -31,7 +32,7 @@ router = APIRouter(prefix="/api/v2/conversations", tags=["conversations-v2"])
 
 async def _serialize_conversation(
     session: AsyncSession,
-    conversation,
+    conversation: Conversation,
     context: AuthenticatedDeviceContextV2,
 ) -> ConversationOutV2:
     if conversation.conversation_type == "group":
@@ -289,7 +290,9 @@ async def rename_group(
     conversation = await conversation_service.get_by_id(session, conversation_id)
     if conversation is None or conversation.conversation_type != "group":
         raise HTTPException(status_code=404, detail="Conversation not found")
-    renamed = await group_conversation_service.rename(session, conversation=conversation, owner=context.user, name=payload.name)
+    renamed = await group_conversation_service.rename(
+        session, conversation=conversation, owner=context.user, name=payload.name
+    )
     return await _serialize_conversation(session, renamed, context)
 
 

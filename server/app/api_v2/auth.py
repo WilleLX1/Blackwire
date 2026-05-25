@@ -89,4 +89,3 @@ async def logout(
 ) -> None:
     await rate_limiter.enforce(client_rate_limit_key(request, "v2-auth-logout"))
     await auth_service_v2.logout(session, payload.refresh_token)
-

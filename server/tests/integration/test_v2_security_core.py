@@ -37,13 +37,13 @@ def _new_device_material(label: str) -> dict[str, Any]:
     }
 
 
-def _register_v2_user(client, username: str, password: str = "password123") -> dict[str, Any]:
+def _register_v2_user(client, username: str, password: str = "Password123!") -> dict[str, Any]:
     response = client.post("/api/v2/auth/register", json={"username": username, "password": password})
     assert response.status_code == 201, response.text
     return response.json()
 
 
-def _login_v2_user(client, username: str, password: str = "password123") -> dict[str, Any]:
+def _login_v2_user(client, username: str, password: str = "Password123!") -> dict[str, Any]:
     response = client.post("/api/v2/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200, response.text
     return response.json()
@@ -63,7 +63,12 @@ def _register_device_v2(client, bootstrap_token: str, material: dict[str, Any]) 
     return response.json()
 
 
-def _aggregate_chain_hash(sender_prev_hash: str, client_message_id: str, sent_at_ms: int, hash_material: list[str]) -> str:
+def _aggregate_chain_hash(
+    sender_prev_hash: str,
+    client_message_id: str,
+    sent_at_ms: int,
+    hash_material: list[str],
+) -> str:
     aggregate = _sha256_hex("|".join(sorted(hash_material)).encode("utf-8"))
     chain_data = "\n".join([sender_prev_hash, client_message_id, str(sent_at_ms), aggregate]).encode("utf-8")
     return _sha256_hex(chain_data)

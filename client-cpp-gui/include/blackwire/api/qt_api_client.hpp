@@ -146,6 +146,8 @@ public:
         const std::string& base_url,
         const std::string& access_token) override;
 
+    FederationWellKnownOut GetFederationWellKnown(const std::string& base_url) override;
+
     std::vector<MessageOut> ListMessages(
         const std::string& base_url,
         const std::string& access_token,
@@ -163,7 +165,8 @@ private:
         const QString& method,
         const QString& url,
         const QString& bearer_token,
-        const nlohmann::json* body);
+        const nlohmann::json* body,
+        int timeout_ms = 30000);
 
     QNetworkAccessManager network_;
 };

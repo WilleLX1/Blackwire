@@ -95,6 +95,29 @@ QString UsernameFromAddress(const QString& actor_address) {
     return normalized;
 }
 
+QString PrefixGroupPreview(const QString& preview, const QString& sender_label) {
+    const QString normalized_preview = preview.trimmed();
+    if (normalized_preview.isEmpty()) {
+        return {};
+    }
+    QString normalized_sender = sender_label.trimmed();
+    if (normalized_sender.isEmpty()) {
+        normalized_sender = "Member";
+    }
+    return QString("%1: %2").arg(normalized_sender, normalized_preview);
+}
+
+QString JoinStringVector(const std::vector<std::string>& values) {
+    QStringList out;
+    for (const auto& value : values) {
+        const QString item = QString::fromStdString(value).trimmed();
+        if (!item.isEmpty()) {
+            out << item;
+        }
+    }
+    return out.isEmpty() ? "none advertised" : out.join(", ");
+}
+
 QString ClientVersionString() {
     const char* version = "0.3.0";
 #ifdef BLACKWIRE_CLIENT_VERSION
@@ -433,11 +456,18 @@ ApplicationController::ApplicationController(
                 }
 
                 state_.local_messages[msg.conversation_id].push_back(local);
+                const auto* incoming_conversation = FindConversation(msg.conversation_id);
+                const bool incoming_group_message =
+                    incoming_conversation != nullptr && incoming_conversation->conversation_type == "group";
+                QString preview = MessagePreview(QString::fromStdString(plaintext));
+                if (incoming_group_message) {
+                    preview = PrefixGroupPreview(preview, UsernameFromAddress(QString::fromStdString(msg.sender_address)));
+                }
                 UpsertConversationMeta(
                     msg.conversation_id,
                     QString(),
                     QString(),
-                    MessagePreview(QString::fromStdString(plaintext)),
+                    preview,
                     QString::fromStdString(msg.created_at));
                 PersistState();
 
@@ -1022,11 +1052,16 @@ ApplicationController::ApplicationController(
         });
 }
 
-void ApplicationController::Initialize() {
+void ApplicationController::Initialize(const QString& base_url_override) {
     try {
         state_ = state_store_.Load();
         if (state_.base_url.empty()) {
-            state_.base_url = "https://localhost:8000";
+            state_.base_url = "http://localhost:8000";
+        }
+        const QString normalized_base_url_override = base_url_override.trimmed();
+        if (!normalized_base_url_override.isEmpty()) {
+            state_.base_url = normalized_base_url_override.toStdString();
+            PersistState();
         }
         user_presence_status_ = NormalizePresenceValue(QString::fromStdString(state_.social_preferences.presence_status));
         state_.social_preferences.presence_status = user_presence_status_.toStdString();
@@ -1044,6 +1079,13 @@ void ApplicationController::Initialize() {
         emit UserPresenceChanged(state_.has_user && state_.has_device ? user_presence_status_ : "offline");
 
         if (state_.has_user && state_.has_device) {
+            try {
+                (void)RequireAccessToken();
+                (void)RequireRefreshToken();
+            } catch (const std::exception& ex) {
+                ExpireLocalSession(QString("Session expired: %1").arg(ex.what()));
+                return;
+            }
             LoadConversations();
             StartRealtime();
             LoadSystemVersion();
@@ -1066,7 +1108,7 @@ void ApplicationController::SetBaseUrl(const QString& base_url) {
 }
 
 QString ApplicationController::BaseUrl() const {
-    return QString::fromStdString(state_.base_url.empty() ? "https://localhost:8000" : state_.base_url);
+    return QString::fromStdString(state_.base_url.empty() ? "http://localhost:8000" : state_.base_url);
 }
 
 void ApplicationController::Register(const QString& username, const QString& password) {
@@ -1717,11 +1759,20 @@ void ApplicationController::SelectConversation(const QString& conversation_id) {
             const QString preview = last.plaintext.empty()
                                         ? ExtractLegacyPlaintext(QString::fromStdString(last.rendered_text))
                                         : QString::fromStdString(last.plaintext);
+            const auto* selected_after_load = FindConversation(selected_conversation_id_);
+            const bool selected_group =
+                selected_after_load != nullptr && selected_after_load->conversation_type == "group";
+            const QString preview_sender =
+                last.sender_user_id == state_.user.id ? "You" : UsernameFromAddress(QString::fromStdString(last.sender_address));
+            QString conversation_preview = MessagePreview(preview);
+            if (selected_group) {
+                conversation_preview = PrefixGroupPreview(conversation_preview, preview_sender);
+            }
             UpsertConversationMeta(
                 selected_conversation_id_,
                 QString(),
                 QString(),
-                MessagePreview(preview),
+                conversation_preview,
                 QString::fromStdString(last.created_at));
         }
 
@@ -2570,7 +2621,7 @@ void ApplicationController::SendMessageToPeer(const QString& peer_username, cons
                 selected_conversation_id_,
                 QString(),
                 QString(),
-                MessagePreview(message_text),
+                PrefixGroupPreview(MessagePreview(message_text), "You"),
                 QString::fromStdString(sent.message.created_at));
         } else {
             UpsertConversationMeta(
@@ -3271,6 +3322,30 @@ void ApplicationController::ResetLocalState() {
     LoadAudioDevices();
 }
 
+RegistrationServerInfoView ApplicationController::InspectRegistrationServer(const QString& base_url) {
+    const QString normalized_base_url = base_url.trimmed();
+    if (normalized_base_url.isEmpty()) {
+        throw std::runtime_error("Home server URL is required");
+    }
+
+    const auto well_known = api_client_.GetFederationWellKnown(normalized_base_url.toStdString());
+
+    RegistrationServerInfoView view;
+    view.base_url = normalized_base_url;
+    view.server_onion = QString::fromStdString(well_known.server_onion).trimmed();
+    view.federation_version = QString::fromStdString(well_known.federation_version).trimmed();
+    view.signing_public_key = QString::fromStdString(well_known.signing_public_key).trimmed();
+    view.identity_binding_mode = QString::fromStdString(well_known.identity_binding_mode).trimmed();
+    view.supported_message_modes = JoinStringVector(well_known.supported_message_modes);
+    view.supported_call_modes = JoinStringVector(well_known.supported_call_modes);
+    view.attachment_limits = QString("inline %1, ciphertext %2, hard ceiling %3")
+                                 .arg(
+                                     FormatBytesHuman(well_known.attachment_inline_max_bytes),
+                                     FormatBytesHuman(well_known.max_ciphertext_bytes),
+                                     FormatBytesHuman(well_known.attachment_hard_ceiling_bytes));
+    return view;
+}
+
 QString ApplicationController::UserDisplayId() const {
     if (!state_.has_user) {
         return {};
@@ -3411,8 +3486,50 @@ void ApplicationController::SaveTokenPair(const TokenBundle& tokens) {
 }
 
 void ApplicationController::RefreshAccessToken() {
-    const auto refreshed = api_client_.Refresh(state_.base_url, RequireRefreshToken());
-    SaveTokenPair(refreshed.tokens);
+    try {
+        const auto refreshed = api_client_.Refresh(state_.base_url, RequireRefreshToken());
+        SaveTokenPair(refreshed.tokens);
+    } catch (const ApiException& ex) {
+        if (ex.status_code() == 401 || ex.status_code() == 403) {
+            ExpireLocalSession(QString("Session expired: %1").arg(ex.what()));
+        }
+        throw;
+    } catch (const std::runtime_error& ex) {
+        ExpireLocalSession(QString("Session expired: %1").arg(ex.what()));
+        throw;
+    }
+}
+
+void ApplicationController::ExpireLocalSession(const QString& reason) {
+    const QString message = reason.trimmed().isEmpty() ? "Session expired. Please log in again." : reason.trimmed();
+
+    std::string error;
+    secret_store_.DeleteSecret(SecretKey("access_token"), &error);
+    secret_store_.DeleteSecret(SecretKey("refresh_token"), &error);
+    secret_store_.DeleteSecret(SecretKey("bootstrap_token"), &error);
+
+    StopAudioEngine();
+    TransitionCallState("idle", QString(), QString(), QString(), "auth_expired");
+    StopRealtime();
+
+    state_.has_user = false;
+    selected_conversation_id_.clear();
+    peer_device_cache_.clear();
+    peer_presence_status_by_address_.clear();
+    pending_request_messages_.clear();
+    pending_request_senders_.clear();
+    connection_status_ = "Auth expired";
+    PersistState();
+
+    RecordDiagnostic(message);
+    emit AuthStateChanged(false, QString());
+    emit DeviceStateChanged(false);
+    emit AccountDevicesChanged(std::vector<DeviceOut>{});
+    emit ConversationListChanged(std::vector<ConversationListItemView>{});
+    emit ConversationSelected(QString(), {});
+    emit ConnectionStatusChanged(connection_status_);
+    emit UserPresenceChanged("offline");
+    emit ErrorOccurred(message);
 }
 
 void ApplicationController::StartRealtime() {
@@ -4582,7 +4699,7 @@ void ApplicationController::UpsertConversationMeta(
 
 void ApplicationController::ClearInMemoryState() {
     state_ = ClientState{};
-    state_.base_url = "https://localhost:8000";
+    state_.base_url = "http://localhost:8000";
     peer_device_cache_.clear();
     peer_attachment_policy_cache_.clear();
     local_attachment_policy_cache_.reset();

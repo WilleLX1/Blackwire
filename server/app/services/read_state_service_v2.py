@@ -190,7 +190,9 @@ class ReadStateServiceV2:
         if message is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message not found")
         if message.conversation_id != conversation.id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message does not belong to conversation")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Message does not belong to conversation"
+            )
         if int(message.sent_at_ms) != int(last_read_sent_at_ms):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -1,4 +1,4 @@
-# Blackwire v0.1 Protocol Behavior
+# Blackwire v0.4 Protocol Behavior
 
 ## Identity Model
 
@@ -6,7 +6,8 @@
 - Users authenticate only on their home server.
 - Client transport is home-server-only: client talks only to configured home server URL.
 - Server returns canonical `user_address` for identity display and copy.
-- One active device is exposed per user in v0.1.
+- `/api/v1` exposes one active device per user for compatibility.
+- `/api/v2` supports multiple active devices per user.
 
 ## Conversation Model
 
@@ -50,8 +51,7 @@
 - Message queue statuses: `pending`, `delivered`, `expired`.
 - Federation outbox statuses: `pending`, `sent` with retry/backoff metadata.
 
-## Remaining v0.1 Constraints
+## Current Constraints
 
-- One active device per user.
-- Sealed-box message encryption (no Noise session ratchet yet).
-- Group messaging and group voice are out of scope.
+- `/api/v1` remains single-active-device for compatibility.
+- Sealed-box message encryption remains the stable baseline while ratchet migration is phased.

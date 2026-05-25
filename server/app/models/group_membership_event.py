@@ -10,9 +10,7 @@ from app.models.base import Base
 
 class GroupMembershipEvent(Base):
     __tablename__ = "group_membership_events"
-    __table_args__ = (
-        UniqueConstraint("group_uid", "event_seq", name="uq_group_membership_event_seq"),
-    )
+    __table_args__ = (UniqueConstraint("group_uid", "event_seq", name="uq_group_membership_event_seq"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     group_uid: Mapped[str] = mapped_column(String(64), index=True)

@@ -26,6 +26,46 @@ nlohmann::json ParseJsonPayload(const QByteArray& payload) {
     return nlohmann::json::parse(payload.constData(), payload.constData() + payload.size());
 }
 
+std::string FormatValidationDetail(const nlohmann::json& detail) {
+    if (detail.is_string()) {
+        return detail.get<std::string>();
+    }
+
+    if (detail.is_array()) {
+        QStringList messages;
+        for (const auto& item : detail) {
+            if (item.is_string()) {
+                messages << QString::fromStdString(item.get<std::string>());
+                continue;
+            }
+            if (!item.is_object()) {
+                continue;
+            }
+            const QString field = item.contains("loc") && item["loc"].is_array() && !item["loc"].empty()
+                                      ? QString::fromStdString(item["loc"].back().get<std::string>())
+                                      : QString();
+            const QString msg = item.contains("msg") && item["msg"].is_string()
+                                    ? QString::fromStdString(item["msg"].get<std::string>())
+                                    : QString("Invalid value");
+            messages << (field.isEmpty() ? msg : QString("%1: %2").arg(field, msg));
+        }
+        if (!messages.isEmpty()) {
+            return messages.join("; ").toStdString();
+        }
+    }
+
+    if (detail.is_object()) {
+        if (detail.contains("msg") && detail["msg"].is_string()) {
+            return detail["msg"].get<std::string>();
+        }
+        if (detail.contains("message") && detail["message"].is_string()) {
+            return detail["message"].get<std::string>();
+        }
+    }
+
+    return detail.dump();
+}
+
 QString JoinUrl(const std::string& base_url, const QString& path) {
     QString base = QString::fromStdString(base_url);
     if (base.endsWith('/')) {
@@ -470,6 +510,16 @@ SystemVersionOut QtApiClient::GetSystemVersion(
     return json.get<SystemVersionOut>();
 }
 
+FederationWellKnownOut QtApiClient::GetFederationWellKnown(const std::string& base_url) {
+    const auto json = RequestJson(
+        "GET",
+        JoinUrl(base_url, "/federation/well-known"),
+        "",
+        nullptr,
+        5000);
+    return json.get<FederationWellKnownOut>();
+}
+
 std::vector<MessageOut> QtApiClient::ListMessages(
     const std::string& base_url,
     const std::string& access_token,
@@ -518,7 +568,8 @@ nlohmann::json QtApiClient::RequestJson(
     const QString& method,
     const QString& url,
     const QString& bearer_token,
-    const nlohmann::json* body) {
+    const nlohmann::json* body,
+    int timeout_ms) {
     const QUrl request_url(url);
     ApplyProxyForUrl(&network_, request_url);
 
@@ -565,7 +616,7 @@ nlohmann::json QtApiClient::RequestJson(
     timer.setSingleShot(true);
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    timer.start(30000);
+    timer.start(timeout_ms);
     loop.exec();
 
     if (timer.isActive()) {
@@ -595,7 +646,7 @@ nlohmann::json QtApiClient::RequestJson(
         try {
             const auto err_json = ParseJsonPayload(data);
             if (err_json.contains("detail")) {
-                message = err_json["detail"].get<std::string>();
+                message = FormatValidationDetail(err_json["detail"]);
             }
         } catch (...) {
         }

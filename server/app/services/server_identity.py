@@ -51,9 +51,7 @@ def _build_signing_key(settings: Settings, server_onion: str) -> signing.Signing
         return signing.SigningKey(raw)
 
     if settings.tor_enabled:
-        raise RuntimeError(
-            "Tor is enabled but federation signing key could not be derived from hidden-service key"
-        )
+        raise RuntimeError("Tor is enabled but federation signing key could not be derived from hidden-service key")
 
     seed = hashlib.sha256(
         f"{settings.jwt_secret_key}|{server_onion}|blackwire-federation-signing-seed".encode()

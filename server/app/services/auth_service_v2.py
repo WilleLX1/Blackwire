@@ -16,11 +16,11 @@ from app.schemas.v2_auth import (
 )
 from app.schemas.v2_device import DeviceRegisterRequestV2
 from app.security.tokens_v2 import (
-    TokenErrorV2,
+    TokenV2Error,
     build_device_token_pair,
+    create_access_token,
     create_bootstrap_token,
     create_refresh_token,
-    create_access_token,
     decode_token,
     hash_refresh_token,
 )
@@ -137,7 +137,7 @@ class AuthServiceV2:
     async def refresh(self, session: AsyncSession, refresh_token_raw: str) -> tuple[User, DeviceTokenBundleV2]:
         try:
             payload = decode_token(refresh_token_raw, expected_type="refresh")
-        except TokenErrorV2 as exc:
+        except TokenV2Error as exc:
             raise AuthServiceError(str(exc), status_code=401) from exc
 
         user_id = str(payload.get("sub") or "")
@@ -203,7 +203,7 @@ class AuthServiceV2:
     async def logout(self, session: AsyncSession, refresh_token_raw: str) -> None:
         try:
             payload = decode_token(refresh_token_raw, expected_type="refresh")
-        except TokenErrorV2:
+        except TokenV2Error:
             return
 
         refresh_id = payload.get("rid")

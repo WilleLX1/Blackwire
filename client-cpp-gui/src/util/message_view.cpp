@@ -9,6 +9,7 @@ namespace blackwire {
 namespace {
 
 const char* kFileMessagePrefix = "bwfile://v1:";
+constexpr qint64 kMessageGroupWindowSeconds = 7 * 60;
 
 QDateTime ParseMessageTime(const std::string& value) {
     const QString iso = QString::fromStdString(value);
@@ -41,6 +42,29 @@ QString LabelFromSenderAddress(const std::string& sender_address) {
         return address.left(at).trimmed();
     }
     return address;
+}
+
+QString SenderGroupKey(const LocalMessage& message, bool outgoing, const QString& sender_label) {
+    if (!message.sender_user_id.empty()) {
+        return QString("user:%1").arg(QString::fromStdString(message.sender_user_id));
+    }
+    if (!message.sender_address.empty()) {
+        return QString("addr:%1").arg(QString::fromStdString(message.sender_address).trimmed().toLower());
+    }
+    if (outgoing) {
+        return "self";
+    }
+    return QString("label:%1").arg(sender_label.trimmed().toLower());
+}
+
+bool IsWithinMessageGroupWindow(const LocalMessage& previous, const LocalMessage& current) {
+    const QDateTime previous_time = ParseMessageTime(previous.created_at);
+    const QDateTime current_time = ParseMessageTime(current.created_at);
+    if (!previous_time.isValid() || !current_time.isValid()) {
+        return true;
+    }
+    const qint64 seconds = previous_time.secsTo(current_time);
+    return seconds >= 0 && seconds <= kMessageGroupWindowSeconds;
 }
 
 }  // namespace
@@ -92,6 +116,9 @@ std::vector<ThreadMessageView> BuildThreadMessageViews(
     std::vector<ThreadMessageView> views;
     views.reserve(ordered.size());
 
+    const LocalMessage* previous_rendered_item = nullptr;
+    QString previous_sender_key;
+
     for (const auto* item : ordered) {
         ThreadMessageView view;
         view.id = QString::fromStdString(item->id);
@@ -123,11 +150,15 @@ std::vector<ThreadMessageView> BuildThreadMessageViews(
             view.grouped_with_previous = false;
         } else {
             view.render_mode = view.body.startsWith(kFileMessagePrefix, Qt::CaseInsensitive) ? "attachment" : "markdown";
+            const QString sender_key = SenderGroupKey(*item, view.outgoing, view.sender_label);
             view.grouped_with_previous =
+                previous_rendered_item != nullptr &&
                 !views.empty() &&
                 !views.back().system &&
-                views.back().outgoing == view.outgoing &&
-                views.back().sender_label == view.sender_label;
+                previous_sender_key == sender_key &&
+                IsWithinMessageGroupWindow(*previous_rendered_item, *item);
+            previous_rendered_item = item;
+            previous_sender_key = sender_key;
         }
         views.push_back(view);
     }

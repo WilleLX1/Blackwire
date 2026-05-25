@@ -43,7 +43,7 @@ def test_conversation_responses_include_peer_username(client) -> None:
 
 def test_conversation_create_accepts_peer_address_for_local_peer(client) -> None:
     alice = register_user(client, "alice_peeraddr")
-    bob = register_user(client, "bob_peeraddr")
+    register_user(client, "bob_peeraddr")
 
     response = client.post(
         "/api/v1/conversations/dm",

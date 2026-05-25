@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 from nacl import encoding, signing
 from nacl import exceptions as nacl_exceptions
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -157,7 +157,11 @@ class MessageServiceV2:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Ratchet mode is required for local delivery",
             )
-        if conversation_kind == "remote" and self.settings.ratchet_require_for_federation and encryption_mode != RATCHET_MODE:
+        if (
+            conversation_kind == "remote"
+            and self.settings.ratchet_require_for_federation
+            and encryption_mode != RATCHET_MODE
+        ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Ratchet mode is required for federation delivery",
@@ -390,7 +394,9 @@ class MessageServiceV2:
             },
         }
 
-    async def _deliver_local_copies(self, session: AsyncSession, copies: list[MessageDeviceCopy], event: MessageEvent) -> None:
+    async def _deliver_local_copies(
+        self, session: AsyncSession, copies: list[MessageDeviceCopy], event: MessageEvent
+    ) -> None:
         delivered_count = 0
         for copy in copies:
             sent = await connection_manager.send_to_device(copy.recipient_device_uid, self._event_payload(event, copy))
@@ -495,7 +501,9 @@ class MessageServiceV2:
         if conversation.conversation_type == "group":
             await metrics.inc("groups.messages.fanout_targets", len(expected_targets))
         expected_pairs = {(address, device_uid) for address, device_uid, _, _ in expected_targets}
-        envelope_pairs = {(env.recipient_user_address.strip().lower(), env.recipient_device_uid) for env in payload.envelopes}
+        envelope_pairs = {
+            (env.recipient_user_address.strip().lower(), env.recipient_device_uid) for env in payload.envelopes
+        }
         if envelope_pairs != expected_pairs:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -554,7 +562,9 @@ class MessageServiceV2:
             envelope = envelopes_by_target[(address, device_uid)]
             if recipient_user_id is None:
                 if not peer_onion:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Remote target missing peer onion")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST, detail="Remote target missing peer onion"
+                    )
                 remote_envelopes_by_peer.setdefault(peer_onion, []).append(
                     {
                         "recipient_user_address": address,
@@ -563,7 +573,9 @@ class MessageServiceV2:
                         "aad_b64": envelope.aad_b64,
                         "signature_b64": envelope.signature_b64,
                         "sender_device_pubkey": envelope.sender_device_pubkey,
-                        "ratchet_header": None if envelope.ratchet_header is None else envelope.ratchet_header.model_dump(),
+                        "ratchet_header": None
+                        if envelope.ratchet_header is None
+                        else envelope.ratchet_header.model_dump(),
                         "ratchet_init": None if envelope.ratchet_init is None else envelope.ratchet_init.model_dump(),
                         "recipient_user_id": "",
                     }
@@ -687,7 +699,9 @@ class MessageServiceV2:
             .offset(offset)
             .limit(limit)
         )
-        rows = list((await session.execute(stmt)).all())
+        rows: list[tuple[MessageDeviceCopy, MessageEvent]] = [
+            (copy, event) for copy, event in (await session.execute(stmt)).all()
+        ]
         if conversation.conversation_type == "group" and member is not None and member.joined_at is not None:
             rows = [row for row in rows if row[1].created_at >= member.joined_at]
         return rows
@@ -866,9 +880,7 @@ class MessageServiceV2:
                 sender_address=payload.sender_address,
                 sender_device_uid=payload.sender_device_uid,
             )
-            envelope_hash_material.append(
-                f"{envelope.recipient_device_uid}:{ciphertext_hash}:{aad_hash}"
-            )
+            envelope_hash_material.append(f"{envelope.recipient_device_uid}:{ciphertext_hash}:{aad_hash}")
             envelope_json = {
                 "recipient_user_address": envelope.recipient_user_address,
                 "recipient_device_uid": envelope.recipient_device_uid,
@@ -904,7 +916,9 @@ class MessageServiceV2:
         )
         session.add(event)
         await session.flush()
-        await self._enforce_pending_queue_limits(session, [(device_uid, item) for _, device_uid, item in local_copy_candidates])
+        await self._enforce_pending_queue_limits(
+            session, [(device_uid, item) for _, device_uid, item in local_copy_candidates]
+        )
 
         for recipient_user_id, recipient_device_uid, envelope_json in local_copy_candidates:
             copy = MessageDeviceCopy(

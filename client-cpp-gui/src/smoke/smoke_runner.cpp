@@ -55,10 +55,16 @@ int SmokeRunner::Run(const QString& base_url) {
         const auto suffix = QString::number(QDateTime::currentMSecsSinceEpoch());
         const auto alice_name = QString("alice_%1").arg(suffix).toStdString();
         const auto bob_name = QString("bob_%1").arg(suffix).toStdString();
-        const std::string password = "password123";
+        const std::string password = "Password123!";
 
         const auto alice_auth = api.Register(base_url.toStdString(), alice_name, password);
         const auto bob_auth = api.Register(base_url.toStdString(), bob_name, password);
+        const std::string alice_address = alice_auth.user.user_address.empty()
+                                              ? alice_name + "@local.invalid"
+                                              : alice_auth.user.user_address;
+        const std::string bob_address = bob_auth.user.user_address.empty()
+                                            ? bob_name + "@local.invalid"
+                                            : bob_auth.user.user_address;
 
         const auto alice_keys = crypto.GenerateDeviceKeys();
         const auto bob_keys = crypto.GenerateDeviceKeys();
@@ -94,7 +100,7 @@ int SmokeRunner::Run(const QString& base_url) {
         const auto bob_lookup = api.GetUserDevice(
             base_url.toStdString(),
             alice_access,
-            bob_name + "@local.invalid");
+            bob_address);
         if (bob_lookup.devices.empty()) {
             throw std::runtime_error("Smoke test: no bob devices resolved");
         }
@@ -115,11 +121,11 @@ int SmokeRunner::Run(const QString& base_url) {
             client_message_id,
             sent_at_ms,
             chain_material);
-        const std::string sender_address = alice_name + "@local.invalid";
+        const std::string sender_address = alice_address;
         const std::string canonical = CanonicalMessageSignature(
             sender_address,
             alice_device_uid,
-            bob_name + "@local.invalid",
+            bob_address,
             bob_device.device_uid,
             client_message_id,
             sent_at_ms,
@@ -175,7 +181,7 @@ int SmokeRunner::Run(const QString& base_url) {
         request.sender_prev_hash = sender_prev_hash;
         request.sender_chain_hash = sender_chain_hash;
         CipherEnvelope env;
-        env.recipient_user_address = bob_name + "@local.invalid";
+        env.recipient_user_address = bob_address;
         env.recipient_device_uid = bob_device.device_uid;
         env.ciphertext_b64 = ciphertext;
         env.aad_b64.clear();

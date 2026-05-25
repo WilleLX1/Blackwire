@@ -137,6 +137,19 @@ TEST(EnvelopeSerializationTest, SystemVersionParsesServerAndBuildInfo) {
     EXPECT_EQ(version.build_timestamp, "2026-03-01T00:00:00Z");
 }
 
+TEST(EnvelopeSerializationTest, FederationWellKnownParsesRegistrationPreviewFields) {
+    const auto json = nlohmann::json::parse(
+        R"({"server_onion":"blackwireexample.onion","federation_version":"2","signing_public_key":"pubkey","identity_binding_mode":"tor_v3_same_ed25519","attachment_inline_max_bytes":1048576,"max_ciphertext_bytes":2097152,"attachment_hard_ceiling_bytes":4194304,"supported_message_modes":["sealedbox_v0_2a","ratchet_v0_2b1"],"supported_call_modes":["webrtc_v0_2b2"]})");
+
+    const auto info = json.get<blackwire::FederationWellKnownOut>();
+
+    EXPECT_EQ(info.server_onion, "blackwireexample.onion");
+    EXPECT_EQ(info.federation_version, "2");
+    EXPECT_EQ(info.supported_message_modes.size(), 2U);
+    EXPECT_EQ(info.supported_call_modes.front(), "webrtc_v0_2b2");
+    EXPECT_EQ(info.attachment_inline_max_bytes, 1048576);
+}
+
 TEST(EnvelopeSerializationTest, ConversationTypingWsEventParses) {
     const auto json = nlohmann::json::parse(
         R"({"type":"conversation.typing","conversation_id":"conv-1","from_user_address":"bob@local.invalid","state":"on","expires_in_ms":6000,"sent_at":"2026-03-01T10:00:00Z"})");

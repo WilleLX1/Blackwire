@@ -12,10 +12,17 @@ def test_canonical_request_string_is_stable() -> None:
         nonce="nonce-1",
         sender_onion="peer.onion",
     )
-    assert (
-        canonical.decode("utf-8")
-        == "POST\n/api/v1/federation/messages/relay\n93a23971a914e5eacbf0a8d25154cda309c3c1c72fbb9914d47c60f3cb681588\n1700000000\nnonce-1\npeer.onion"
+    expected = "\n".join(
+        [
+            "POST",
+            "/api/v1/federation/messages/relay",
+            "93a23971a914e5eacbf0a8d25154cda309c3c1c72fbb9914d47c60f3cb681588",
+            "1700000000",
+            "nonce-1",
+            "peer.onion",
+        ]
     )
+    assert canonical.decode("utf-8") == expected
 
 
 def test_sign_headers_include_required_fields() -> None:

@@ -59,6 +59,51 @@ TEST(MessageViewTest, UsesSenderAddressLabelForGroupMembersAndSeparatesSpeakers)
     EXPECT_FALSE(views[1].grouped_with_previous);
 }
 
+TEST(MessageViewTest, DoesNotGroupSameSenderAfterLongGap) {
+    blackwire::LocalMessage first;
+    first.id = "1";
+    first.sender_user_id = "peer-a-id";
+    first.sender_address = "alice@server-a.onion";
+    first.created_at = "2026-02-14T10:00:00Z";
+    first.plaintext = "hello";
+
+    blackwire::LocalMessage second;
+    second.id = "2";
+    second.sender_user_id = "peer-a-id";
+    second.sender_address = "alice@server-a.onion";
+    second.created_at = "2026-02-14T10:20:00Z";
+    second.plaintext = "later";
+
+    std::vector<blackwire::LocalMessage> input = {first, second};
+    const auto views = blackwire::BuildThreadMessageViews(input, "self-id", "Member");
+
+    ASSERT_EQ(views.size(), 2U);
+    EXPECT_FALSE(views[0].grouped_with_previous);
+    EXPECT_FALSE(views[1].grouped_with_previous);
+}
+
+TEST(MessageViewTest, DoesNotGroupSameUsernameFromDifferentAddresses) {
+    blackwire::LocalMessage first;
+    first.id = "1";
+    first.sender_address = "alice@server-a.onion";
+    first.created_at = "2026-02-14T10:00:00Z";
+    first.plaintext = "hello";
+
+    blackwire::LocalMessage second;
+    second.id = "2";
+    second.sender_address = "alice@server-b.onion";
+    second.created_at = "2026-02-14T10:01:00Z";
+    second.plaintext = "different alice";
+
+    std::vector<blackwire::LocalMessage> input = {first, second};
+    const auto views = blackwire::BuildThreadMessageViews(input, "self-id", "Member");
+
+    ASSERT_EQ(views.size(), 2U);
+    EXPECT_EQ(views[0].sender_label.toStdString(), "alice");
+    EXPECT_EQ(views[1].sender_label.toStdString(), "alice");
+    EXPECT_FALSE(views[1].grouped_with_previous);
+}
+
 TEST(MessageViewTest, FormatsInvalidTimestampWithFallback) {
     const auto display = blackwire::FormatThreadTimestamp("not-a-real-time");
     EXPECT_EQ(display.toStdString(), "not-a-real-time");

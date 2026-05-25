@@ -9,14 +9,32 @@ from pydantic import ValidationError
 from app.api import auth, conversations, devices, federation, health, messages, metrics, users
 from app.api_v2 import (
     auth as auth_v2,
+)
+from app.api_v2 import (
     conversations as conversations_v2,
+)
+from app.api_v2 import (
     devices as devices_v2,
+)
+from app.api_v2 import (
     federation as federation_v2,
+)
+from app.api_v2 import (
     keys as keys_v2,
+)
+from app.api_v2 import (
     messages as messages_v2,
+)
+from app.api_v2 import (
     presence as presence_v2,
+)
+from app.api_v2 import (
     system as system_v2,
+)
+from app.api_v2 import (
     users as users_v2,
+)
+from app.api_v2 import (
     ws as ws_v2,
 )
 from app.config import get_settings
@@ -35,8 +53,8 @@ from app.services.federation_outbox_service import federation_outbox_service
 from app.services.message_service import message_service
 from app.services.message_service_v2 import message_service_v2
 from app.services.queue_worker import queue_cleanup_worker
-from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.rate_limit import rate_limiter
+from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.server_identity import (
     get_server_onion,
     get_server_onion_source,
@@ -95,26 +113,22 @@ def create_app() -> FastAPI:
     async def on_startup() -> None:
         if len(settings.jwt_secret_key.encode("utf-8")) < 32:
             raise RuntimeError("BLACKWIRE_JWT_SECRET_KEY must be at least 32 bytes")
-        _KNOWN_INSECURE_DEFAULTS = {
+        known_insecure_defaults = {
             "change-this-secret-minimum-32-bytes",
             "change-me",
             "secret",
         }
-        if settings.jwt_secret_key in _KNOWN_INSECURE_DEFAULTS:
+        if settings.jwt_secret_key in known_insecure_defaults:
             if settings.environment != "dev":
                 raise RuntimeError(
                     "BLACKWIRE_JWT_SECRET_KEY is set to a known insecure default. "
                     "Generate a unique secret before running in test/prod."
                 )
-            logger.warning(
-                "JWT_SECRET_KEY is a known insecure default – acceptable in dev only"
-            )
+            logger.warning("JWT_SECRET_KEY is a known insecure default – acceptable in dev only")
         if settings.environment != "dev" and "*" in settings.allow_origins:
             raise RuntimeError("Wildcard CORS origin is not allowed outside dev")
         if settings.enable_webrtc_v2b2 and not settings.webrtc_ice_servers_json.strip():
-            raise RuntimeError(
-                "BLACKWIRE_WEBRTC_ICE_SERVERS_JSON is required when BLACKWIRE_ENABLE_WEBRTC_V2B2=true"
-            )
+            raise RuntimeError("BLACKWIRE_WEBRTC_ICE_SERVERS_JSON is required when BLACKWIRE_ENABLE_WEBRTC_V2B2=true")
         if settings.enable_webrtc_v2b2 and settings.webrtc_ice_servers_json.strip():
             try:
                 parsed_ice = json.loads(settings.webrtc_ice_servers_json)
@@ -159,9 +173,7 @@ def create_app() -> FastAPI:
             async with session_factory() as session:
                 return await federation_outbox_service.process_due(session)
 
-        app.state.queue_cleanup_task = asyncio.create_task(
-            queue_cleanup_worker(cleanup_once, stop_event)
-        )
+        app.state.queue_cleanup_task = asyncio.create_task(queue_cleanup_worker(cleanup_once, stop_event))
         app.state.federation_outbox_task = asyncio.create_task(
             queue_cleanup_worker(
                 federation_outbox_once,
@@ -198,12 +210,12 @@ def create_app() -> FastAPI:
             return
 
         try:
-            payload = decode_token(token, expected_type="access")
+            token_payload = decode_token(token, expected_type="access")
         except TokenError:
             await websocket.close(code=1008, reason="Invalid access token")
             return
 
-        user_id = payload.get("sub")
+        user_id = token_payload.get("sub")
         if not user_id:
             await websocket.close(code=1008, reason="Invalid access token")
             return
@@ -211,6 +223,7 @@ def create_app() -> FastAPI:
         session_factory = get_session_factory()
         async with session_factory() as auth_session:
             from sqlalchemy import select
+
             from app.models.user import User
 
             user_stmt = select(User).where(User.id == user_id, User.disabled_at.is_(None))
@@ -251,9 +264,9 @@ def create_app() -> FastAPI:
 
                 if msg_type == "call.offer":
                     try:
-                        payload = CallOfferRequest.model_validate(incoming)
+                        offer_payload = CallOfferRequest.model_validate(incoming)
                         async with session_factory() as call_session:
-                            await call_service.offer(call_session, user_id, payload)
+                            await call_service.offer(call_session, user_id, offer_payload)
                     except ValidationError as exc:
                         await send_call_error("invalid_call_offer", str(exc))
                     except CallProtocolError as exc:
@@ -262,8 +275,8 @@ def create_app() -> FastAPI:
 
                 if msg_type == "call.accept":
                     try:
-                        payload = CallAcceptRequest.model_validate(incoming)
-                        await call_service.accept(user_id, payload)
+                        accept_payload = CallAcceptRequest.model_validate(incoming)
+                        await call_service.accept(user_id, accept_payload)
                     except ValidationError as exc:
                         await send_call_error("invalid_call_accept", str(exc))
                     except CallProtocolError as exc:
@@ -272,8 +285,8 @@ def create_app() -> FastAPI:
 
                 if msg_type == "call.reject":
                     try:
-                        payload = CallRejectRequest.model_validate(incoming)
-                        await call_service.reject(user_id, payload)
+                        reject_payload = CallRejectRequest.model_validate(incoming)
+                        await call_service.reject(user_id, reject_payload)
                     except ValidationError as exc:
                         await send_call_error("invalid_call_reject", str(exc))
                     except CallProtocolError as exc:
@@ -282,8 +295,8 @@ def create_app() -> FastAPI:
 
                 if msg_type == "call.end":
                     try:
-                        payload = CallEndRequest.model_validate(incoming)
-                        await call_service.end(user_id, payload)
+                        end_payload = CallEndRequest.model_validate(incoming)
+                        await call_service.end(user_id, end_payload)
                     except ValidationError as exc:
                         await send_call_error("invalid_call_end", str(exc))
                     except CallProtocolError as exc:
@@ -292,8 +305,8 @@ def create_app() -> FastAPI:
 
                 if msg_type == "call.audio":
                     try:
-                        payload = CallAudioRequest.model_validate(incoming)
-                        await call_service.audio(user_id, payload)
+                        audio_payload = CallAudioRequest.model_validate(incoming)
+                        await call_service.audio(user_id, audio_payload)
                     except ValidationError as exc:
                         await send_call_error("invalid_call_audio", str(exc))
                     except CallProtocolError as exc:

@@ -2,7 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import client_rate_limit_key
-from app.dependencies import AuthenticatedDeviceContextV2, db_session, get_bootstrap_user_v2, get_current_device_context_v2
+from app.dependencies import (
+    AuthenticatedDeviceContextV2,
+    db_session,
+    get_bootstrap_user_v2,
+    get_current_device_context_v2,
+)
 from app.models.user import User
 from app.schemas.user import UserOut
 from app.schemas.v2_auth import DeviceAuthResponseV2
@@ -55,4 +60,3 @@ async def revoke_device(
 ) -> DeviceOutV2:
     await rate_limiter.enforce(client_rate_limit_key(request, f"v2-device-revoke:{context.user.id}"))
     return await device_service_v2.revoke_device(session, context.user, device_uid)
-

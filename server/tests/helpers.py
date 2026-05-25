@@ -12,7 +12,7 @@ def random_b64(bytes_len: int = 32) -> str:
     return base64.b64encode(secrets.token_bytes(bytes_len)).decode("ascii")
 
 
-def register_user(client: TestClient, username: str, password: str = "password123") -> dict:
+def register_user(client: TestClient, username: str, password: str = "Password123!") -> dict:
     response = client.post(
         "/api/v1/auth/register",
         json={"username": username, "password": password},

@@ -17,11 +17,11 @@ from app.schemas.call import (
     CallWebRtcIceRequest,
     CallWebRtcOfferRequest,
 )
-from app.security.tokens_v2 import TokenErrorV2, decode_token
+from app.security.tokens_v2 import TokenV2Error, decode_token
 from app.services.call_service import CallProtocolError, call_service
+from app.services.conversation_service import conversation_service
 from app.services.group_call_service import group_call_service
 from app.services.message_service_v2 import message_service_v2
-from app.services.conversation_service import conversation_service
 from app.ws.manager import connection_manager
 
 logger = logging.getLogger("blackwire.app.v2.ws")
@@ -48,7 +48,7 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
     try:
         payload = decode_token(token, expected_type="access")
-    except TokenErrorV2:
+    except TokenV2Error:
         await websocket.close(code=1008, reason="Invalid access token")
         return
 
@@ -60,7 +60,9 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
     session_factory = get_session_factory()
     async with session_factory() as session:
-        user = (await session.execute(select(User).where(User.id == user_id, User.disabled_at.is_(None)))).scalar_one_or_none()
+        user = (
+            await session.execute(select(User).where(User.id == user_id, User.disabled_at.is_(None)))
+        ).scalar_one_or_none()
         device = (
             await session.execute(
                 select(Device).where(
@@ -93,9 +95,7 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
             if msg_type == "message.ack":
                 copy_id = incoming.get("copy_id") or incoming.get("message_id")
                 if not copy_id:
-                    await websocket.send_json(
-                        {"type": "error", "code": "invalid_ack", "detail": "copy_id required"}
-                    )
+                    await websocket.send_json({"type": "error", "code": "invalid_ack", "detail": "copy_id required"})
                     continue
                 async with session_factory() as ack_session:
                     await message_service_v2.acknowledge(
@@ -108,13 +108,13 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.offer":
                 try:
-                    payload_call = CallOfferRequest.model_validate(incoming)
+                    offer_payload = CallOfferRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        conversation = await conversation_service.get_by_id(call_session, payload_call.conversation_id)
+                        conversation = await conversation_service.get_by_id(call_session, offer_payload.conversation_id)
                         if conversation is not None and conversation.conversation_type == "group":
-                            await group_call_service.offer(call_session, user_id, payload_call.conversation_id)
+                            await group_call_service.offer(call_session, user_id, offer_payload.conversation_id)
                         else:
-                            await call_service.offer(call_session, user_id, payload_call)
+                            await call_service.offer(call_session, user_id, offer_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_offer", str(exc))
                 except CallProtocolError as exc:
@@ -125,12 +125,12 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.accept":
                 try:
-                    payload_call = CallAcceptRequest.model_validate(incoming)
+                    accept_payload = CallAcceptRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
-                            await group_call_service.join(call_session, user_id, payload_call.call_id)
+                        if await group_call_service.is_group_call(call_session, accept_payload.call_id):
+                            await group_call_service.join(call_session, user_id, accept_payload.call_id)
                         else:
-                            await call_service.accept(user_id, payload_call)
+                            await call_service.accept(user_id, accept_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_accept", str(exc))
                 except CallProtocolError as exc:
@@ -141,12 +141,12 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.reject":
                 try:
-                    payload_call = CallRejectRequest.model_validate(incoming)
+                    reject_payload = CallRejectRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
-                            await group_call_service.reject(call_session, user_id, payload_call.call_id)
+                        if await group_call_service.is_group_call(call_session, reject_payload.call_id):
+                            await group_call_service.reject(call_session, user_id, reject_payload.call_id)
                         else:
-                            await call_service.reject(user_id, payload_call)
+                            await call_service.reject(user_id, reject_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_reject", str(exc))
                 except CallProtocolError as exc:
@@ -157,17 +157,17 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.end":
                 try:
-                    payload_call = CallEndRequest.model_validate(incoming)
+                    end_payload = CallEndRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
+                        if await group_call_service.is_group_call(call_session, end_payload.call_id):
                             await group_call_service.leave(
                                 call_session,
                                 user_id,
-                                payload_call.call_id,
-                                reason=(payload_call.reason or "left"),
+                                end_payload.call_id,
+                                reason=(end_payload.reason or "left"),
                             )
                         else:
-                            await call_service.end(user_id, payload_call)
+                            await call_service.end(user_id, end_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_end", str(exc))
                 except CallProtocolError as exc:
@@ -181,12 +181,12 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
                     await send_call_error("audio_deprecated", "WS audio transport is disabled; use WebRTC")
                     continue
                 try:
-                    payload_call = CallAudioRequest.model_validate(incoming)
+                    audio_payload = CallAudioRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
-                            await group_call_service.audio(call_session, user_id, payload_call)
+                        if await group_call_service.is_group_call(call_session, audio_payload.call_id):
+                            await group_call_service.audio(call_session, user_id, audio_payload)
                         else:
-                            await call_service.audio(user_id, payload_call)
+                            await call_service.audio(user_id, audio_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_audio", str(exc))
                 except CallProtocolError as exc:
@@ -197,27 +197,29 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.webrtc.offer":
                 try:
-                    payload_call = CallWebRtcOfferRequest.model_validate(incoming)
+                    webrtc_offer_payload = CallWebRtcOfferRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
-                            target = payload_call.target_user_address.strip().lower()
+                        if await group_call_service.is_group_call(call_session, webrtc_offer_payload.call_id):
+                            target = webrtc_offer_payload.target_user_address.strip().lower()
                             if not target:
-                                raise HTTPException(status_code=400, detail="target_user_address is required for group signaling")
+                                raise HTTPException(
+                                    status_code=400, detail="target_user_address is required for group signaling"
+                                )
                             await group_call_service.route_webrtc_signal(
                                 call_session,
                                 sender_user_id=user_id,
-                                call_id=payload_call.call_id,
+                                call_id=webrtc_offer_payload.call_id,
                                 event_type="call.webrtc.offer",
                                 body={
-                                    "sdp": payload_call.sdp,
-                                    "call_schema_version": payload_call.call_schema_version,
-                                    "call_mode": payload_call.call_mode,
-                                    "max_participants": payload_call.max_participants,
+                                    "sdp": webrtc_offer_payload.sdp,
+                                    "call_schema_version": webrtc_offer_payload.call_schema_version,
+                                    "call_mode": webrtc_offer_payload.call_mode,
+                                    "max_participants": webrtc_offer_payload.max_participants,
                                 },
                                 target_user_address=target,
                             )
                         else:
-                            await call_service.webrtc_offer(user_id, payload_call)
+                            await call_service.webrtc_offer(user_id, webrtc_offer_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_webrtc_offer", str(exc))
                 except CallProtocolError as exc:
@@ -228,27 +230,29 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.webrtc.answer":
                 try:
-                    payload_call = CallWebRtcAnswerRequest.model_validate(incoming)
+                    webrtc_answer_payload = CallWebRtcAnswerRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
-                            target = payload_call.target_user_address.strip().lower()
+                        if await group_call_service.is_group_call(call_session, webrtc_answer_payload.call_id):
+                            target = webrtc_answer_payload.target_user_address.strip().lower()
                             if not target:
-                                raise HTTPException(status_code=400, detail="target_user_address is required for group signaling")
+                                raise HTTPException(
+                                    status_code=400, detail="target_user_address is required for group signaling"
+                                )
                             await group_call_service.route_webrtc_signal(
                                 call_session,
                                 sender_user_id=user_id,
-                                call_id=payload_call.call_id,
+                                call_id=webrtc_answer_payload.call_id,
                                 event_type="call.webrtc.answer",
                                 body={
-                                    "sdp": payload_call.sdp,
-                                    "call_schema_version": payload_call.call_schema_version,
-                                    "call_mode": payload_call.call_mode,
-                                    "max_participants": payload_call.max_participants,
+                                    "sdp": webrtc_answer_payload.sdp,
+                                    "call_schema_version": webrtc_answer_payload.call_schema_version,
+                                    "call_mode": webrtc_answer_payload.call_mode,
+                                    "max_participants": webrtc_answer_payload.max_participants,
                                 },
                                 target_user_address=target,
                             )
                         else:
-                            await call_service.webrtc_answer(user_id, payload_call)
+                            await call_service.webrtc_answer(user_id, webrtc_answer_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_webrtc_answer", str(exc))
                 except CallProtocolError as exc:
@@ -259,29 +263,31 @@ async def websocket_endpoint_v2(websocket: WebSocket) -> None:
 
             if msg_type == "call.webrtc.ice":
                 try:
-                    payload_call = CallWebRtcIceRequest.model_validate(incoming)
+                    webrtc_ice_payload = CallWebRtcIceRequest.model_validate(incoming)
                     async with session_factory() as call_session:
-                        if await group_call_service.is_group_call(call_session, payload_call.call_id):
-                            target = payload_call.target_user_address.strip().lower()
+                        if await group_call_service.is_group_call(call_session, webrtc_ice_payload.call_id):
+                            target = webrtc_ice_payload.target_user_address.strip().lower()
                             if not target:
-                                raise HTTPException(status_code=400, detail="target_user_address is required for group signaling")
+                                raise HTTPException(
+                                    status_code=400, detail="target_user_address is required for group signaling"
+                                )
                             await group_call_service.route_webrtc_signal(
                                 call_session,
                                 sender_user_id=user_id,
-                                call_id=payload_call.call_id,
+                                call_id=webrtc_ice_payload.call_id,
                                 event_type="call.webrtc.ice",
                                 body={
-                                    "candidate": payload_call.candidate,
-                                    "sdp_mid": payload_call.sdp_mid,
-                                    "sdp_mline_index": payload_call.sdp_mline_index,
-                                    "call_schema_version": payload_call.call_schema_version,
-                                    "call_mode": payload_call.call_mode,
-                                    "max_participants": payload_call.max_participants,
+                                    "candidate": webrtc_ice_payload.candidate,
+                                    "sdp_mid": webrtc_ice_payload.sdp_mid,
+                                    "sdp_mline_index": webrtc_ice_payload.sdp_mline_index,
+                                    "call_schema_version": webrtc_ice_payload.call_schema_version,
+                                    "call_mode": webrtc_ice_payload.call_mode,
+                                    "max_participants": webrtc_ice_payload.max_participants,
                                 },
                                 target_user_address=target,
                             )
                         else:
-                            await call_service.webrtc_ice(user_id, payload_call)
+                            await call_service.webrtc_ice(user_id, webrtc_ice_payload)
                 except ValidationError as exc:
                     await send_call_error("invalid_call_webrtc_ice", str(exc))
                 except CallProtocolError as exc:

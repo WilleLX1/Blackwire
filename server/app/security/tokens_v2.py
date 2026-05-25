@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from app.config import get_settings
 
 
-class TokenErrorV2(ValueError):
+class TokenV2Error(ValueError):
     pass
 
 
@@ -47,7 +47,7 @@ def _signing_private_key() -> ed25519.Ed25519PrivateKey:
             raise RuntimeError("BLACKWIRE_JWT_PRIVATE_KEY_PEM must be an Ed25519 key")
         return key
 
-    seed = hashlib.sha256(f"{settings.jwt_secret_key}|blackwire-v2-jwt-seed".encode("utf-8")).digest()
+    seed = hashlib.sha256(f"{settings.jwt_secret_key}|blackwire-v2-jwt-seed".encode()).digest()
     return ed25519.Ed25519PrivateKey.from_private_bytes(seed[:32])
 
 
@@ -68,8 +68,23 @@ def reset_v2_token_cache() -> None:
     _verify_public_key.cache_clear()
 
 
+def _signing_private_key_pem() -> bytes:
+    return _signing_private_key().private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
+def _verify_public_key_pem() -> bytes:
+    return _verify_public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
 def _encode(payload: dict[str, Any]) -> str:
-    token = jwt.encode(payload, _signing_private_key(), algorithm="EdDSA")
+    token = jwt.encode(payload, _signing_private_key_pem(), algorithm="EdDSA")
     if isinstance(token, bytes):
         return token.decode("utf-8")
     return token
@@ -131,24 +146,26 @@ def decode_token(token: str, expected_type: str | None = None) -> dict[str, Any]
     try:
         payload = jwt.decode(
             token,
-            _verify_public_key(),
+            _verify_public_key_pem(),
             algorithms=["EdDSA"],
             options={"require": ["exp", "iat", "sub", "did", "type", "jti"]},
         )
     except jwt.ExpiredSignatureError as exc:
-        raise TokenErrorV2("Token expired") from exc
+        raise TokenV2Error("Token expired") from exc
     except jwt.InvalidTokenError as exc:
-        raise TokenErrorV2("Invalid token") from exc
+        raise TokenV2Error("Invalid token") from exc
 
     token_type = payload.get("type")
     if expected_type and token_type != expected_type:
-        raise TokenErrorV2(f"Expected {expected_type} token")
+        raise TokenV2Error(f"Expected {expected_type} token")
     return payload
 
 
 def build_device_token_pair(user_id: str, username: str, device_uid: str) -> DeviceTokenPairV2:
     access_token, access_ttl = create_access_token(user_id=user_id, username=username, device_uid=device_uid)
-    refresh_token, refresh_id, refresh_expiry, refresh_ttl = create_refresh_token(user_id=user_id, device_uid=device_uid)
+    refresh_token, refresh_id, refresh_expiry, refresh_ttl = create_refresh_token(
+        user_id=user_id, device_uid=device_uid
+    )
     return DeviceTokenPairV2(
         access_token=access_token,
         access_expires_in=access_ttl,
@@ -161,4 +178,3 @@ def build_device_token_pair(user_id: str, username: str, device_uid: str) -> Dev
 
 def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-

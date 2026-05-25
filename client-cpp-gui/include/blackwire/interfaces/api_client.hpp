@@ -156,6 +156,8 @@ public:
         const std::string& base_url,
         const std::string& access_token) = 0;
 
+    virtual FederationWellKnownOut GetFederationWellKnown(const std::string& base_url) = 0;
+
     virtual std::vector<MessageOut> ListMessages(
         const std::string& base_url,
         const std::string& access_token,

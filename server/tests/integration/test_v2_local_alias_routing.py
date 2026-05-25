@@ -5,7 +5,7 @@ def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _register_v2_user(client, username: str, password: str = "password123") -> dict:
+def _register_v2_user(client, username: str, password: str = "Password123!") -> dict:
     response = client.post("/api/v2/auth/register", json={"username": username, "password": password})
     assert response.status_code == 201, response.text
     return response.json()

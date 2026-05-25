@@ -38,7 +38,7 @@ public:
         const QString& profile_name = "default",
         QObject* parent = nullptr);
 
-    void Initialize();
+    void Initialize(const QString& base_url_override = QString());
 
     void SetBaseUrl(const QString& base_url);
     QString BaseUrl() const;
@@ -80,6 +80,7 @@ public:
     void RetryFailedAttachment(const QString& message_id);
     void LoadSystemVersion();
     void ResetLocalState();
+    RegistrationServerInfoView InspectRegistrationServer(const QString& base_url);
 
     QString UserDisplayId() const;
     QString DeviceId() const;
@@ -125,6 +126,7 @@ private:
     void SaveBootstrapToken(const TokenBundle& tokens);
     void SaveTokenPair(const TokenBundle& tokens);
     void RefreshAccessToken();
+    void ExpireLocalSession(const QString& reason);
     void StartRealtime();
     void StopRealtime();
     void EncryptPlaintextCacheInState();

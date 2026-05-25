@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import client_rate_limit_key
 from app.dependencies import db_session, get_current_user
+from app.models.message import Message
 from app.models.user import User
 from app.schemas.message import MessageOut, MessageSendRequest, MessageSendResponse
 from app.services.message_service import message_service
@@ -11,7 +12,7 @@ from app.services.rate_limit import rate_limiter
 router = APIRouter(prefix="/messages", tags=["messages"])
 
 
-def _serialize_message(item) -> MessageOut:
+def _serialize_message(item: Message) -> MessageOut:
     return MessageOut(
         id=item.id,
         conversation_id=item.conversation_id,

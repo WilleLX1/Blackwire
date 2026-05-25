@@ -31,6 +31,17 @@ struct GroupInvitePickerView {
     int remaining_slots = 0;
 };
 
+struct RegistrationServerInfoView {
+    QString base_url;
+    QString server_onion;
+    QString federation_version;
+    QString signing_public_key;
+    QString identity_binding_mode;
+    QString supported_message_modes;
+    QString supported_call_modes;
+    QString attachment_limits;
+};
+
 struct AudioDeviceOptionView {
     QString id;
     QString name;

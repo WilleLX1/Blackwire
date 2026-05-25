@@ -4,7 +4,7 @@ from tests.helpers import auth_header
 def test_auth_and_me_include_canonical_identity_fields(client) -> None:
     register = client.post(
         "/api/v1/auth/register",
-        json={"username": "alice_identity", "password": "password123"},
+        json={"username": "alice_identity", "password": "Password123!"},
     )
     assert register.status_code == 201, register.text
     register_body = register.json()
@@ -13,7 +13,7 @@ def test_auth_and_me_include_canonical_identity_fields(client) -> None:
 
     login = client.post(
         "/api/v1/auth/login",
-        json={"username": "alice_identity", "password": "password123"},
+        json={"username": "alice_identity", "password": "Password123!"},
     )
     assert login.status_code == 200, login.text
     login_body = login.json()

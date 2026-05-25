@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
 
-
 _VALID_STATUSES = {"active", "inactive", "offline", "dnd"}
 
 

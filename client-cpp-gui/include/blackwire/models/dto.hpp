@@ -281,6 +281,18 @@ struct SystemVersionOut {
     std::string build_timestamp;
 };
 
+struct FederationWellKnownOut {
+    std::string server_onion;
+    std::string federation_version = "2";
+    std::string signing_public_key;
+    std::string identity_binding_mode = "tor_v3_same_ed25519";
+    int attachment_inline_max_bytes = 0;
+    int max_ciphertext_bytes = 0;
+    int attachment_hard_ceiling_bytes = 0;
+    std::vector<std::string> supported_message_modes;
+    std::vector<std::string> supported_call_modes;
+};
+
 struct MessageSendResponse {
     bool duplicate = false;
     MessageOut message;
@@ -1250,6 +1262,18 @@ inline void from_json(const nlohmann::json& j, SystemVersionOut& v) {
     v.api_version = j.value("api_version", "v2");
     v.git_commit = j.value("git_commit", "");
     v.build_timestamp = j.value("build_timestamp", "");
+}
+
+inline void from_json(const nlohmann::json& j, FederationWellKnownOut& v) {
+    v.server_onion = j.value("server_onion", "");
+    v.federation_version = j.value("federation_version", "2");
+    v.signing_public_key = j.value("signing_public_key", "");
+    v.identity_binding_mode = j.value("identity_binding_mode", "tor_v3_same_ed25519");
+    v.attachment_inline_max_bytes = j.value("attachment_inline_max_bytes", 0);
+    v.max_ciphertext_bytes = j.value("max_ciphertext_bytes", 0);
+    v.attachment_hard_ceiling_bytes = j.value("attachment_hard_ceiling_bytes", 0);
+    v.supported_message_modes = j.value("supported_message_modes", std::vector<std::string>{});
+    v.supported_call_modes = j.value("supported_call_modes", std::vector<std::string>{});
 }
 
 inline void from_json(const nlohmann::json& j, WsEventMessageNew& v) {

@@ -1,0 +1,3 @@
+[x] If auth not correct, log out to login page.
+[x] Register button takes you to a register page.
+    [x] On register page you should be able to automatically see information about server (federation) you are about to register on.

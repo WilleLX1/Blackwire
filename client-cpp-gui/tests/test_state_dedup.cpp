@@ -26,6 +26,6 @@ TEST(StateDedupTest, ConversationMetaRoundTrip) {
     ASSERT_TRUE(restored.conversation_meta.contains("conv-1"));
     const auto& loaded_meta = restored.conversation_meta.at("conv-1");
     EXPECT_EQ(loaded_meta.peer_username, "alice");
-    EXPECT_EQ(loaded_meta.last_preview, "hello");
+    EXPECT_EQ(loaded_meta.last_preview, "(encrypted message)");
     EXPECT_EQ(loaded_meta.last_activity_at, "2026-02-14T12:00:00Z");
 }

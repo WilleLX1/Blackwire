@@ -16,12 +16,8 @@ class Device(Base):
     ik_ed25519_pub: Mapped[str] = mapped_column(String(256))
     enc_x25519_pub: Mapped[str] = mapped_column(String(256), unique=True)
     status: Mapped[str] = mapped_column(String(16), index=True, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="devices")
@@ -31,12 +27,8 @@ class ActiveDevice(Base):
     __tablename__ = "active_devices"
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("devices.id", ondelete="CASCADE"), unique=True, index=True
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC)
-    )
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), unique=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     user = relationship("User")
     device = relationship("Device")

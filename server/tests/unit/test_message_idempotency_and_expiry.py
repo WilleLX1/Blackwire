@@ -55,9 +55,7 @@ def test_idempotent_send_and_queue_expiry(client) -> None:
         session_factory = get_session_factory()
         async with session_factory() as session:
             queue_item = (
-                await session.execute(
-                    select(DeliveryQueue).where(DeliveryQueue.message_id == message_id)
-                )
+                await session.execute(select(DeliveryQueue).where(DeliveryQueue.message_id == message_id))
             ).scalar_one()
             queue_item.expires_at = datetime.now(UTC) - timedelta(seconds=1)
             await session.commit()
@@ -65,9 +63,7 @@ def test_idempotent_send_and_queue_expiry(client) -> None:
             await message_service.expire_old(session)
 
             refreshed = (
-                await session.execute(
-                    select(DeliveryQueue).where(DeliveryQueue.message_id == message_id)
-                )
+                await session.execute(select(DeliveryQueue).where(DeliveryQueue.message_id == message_id))
             ).scalar_one()
             return refreshed.status
 

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.utils import client_rate_limit_key
 from app.dependencies import db_session, get_current_user
+from app.models.message import Message
 from app.models.user import User
 from app.schemas.conversation import ConversationOut, CreateDMConversationRequest
 from app.schemas.message import MessageOut
@@ -13,7 +14,7 @@ from app.services.rate_limit import rate_limiter
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
-def _serialize_message(item) -> MessageOut:
+def _serialize_message(item: Message) -> MessageOut:
     return MessageOut(
         id=item.id,
         conversation_id=item.conversation_id,
@@ -44,9 +45,7 @@ async def create_dm(
     )
     peer_username = await conversation_service.peer_username_for_user(session, conversation, current_user.id)
     peer_address = await conversation_service.peer_address_for_user(session, conversation, current_user.id)
-    peer_server_onion = await conversation_service.peer_server_onion_for_user(
-        session, conversation, current_user.id
-    )
+    peer_server_onion = await conversation_service.peer_server_onion_for_user(session, conversation, current_user.id)
     return ConversationOut(
         id=conversation.id,
         kind=conversation.kind,
@@ -74,9 +73,7 @@ async def list_conversations(
     for item in conversations:
         peer_username = await conversation_service.peer_username_for_user(session, item, current_user.id)
         peer_address = await conversation_service.peer_address_for_user(session, item, current_user.id)
-        peer_server_onion = await conversation_service.peer_server_onion_for_user(
-            session, item, current_user.id
-        )
+        peer_server_onion = await conversation_service.peer_server_onion_for_user(session, item, current_user.id)
         response_items.append(
             ConversationOut(
                 id=item.id,

@@ -2,6 +2,7 @@ param(
   [ValidateSet("Debug", "Release")]
   [string]$Config = "Debug",
   [string]$Profile = "default",
+  [string]$BaseUrl = "",
   [switch]$Detached
 )
 
@@ -73,8 +74,13 @@ if (Test-Path $qtPlugin) {
   $env:QT_PLUGIN_PATH = $qtPlugin
 }
 
+$arguments = @("--profile=$Profile")
+if (-not [string]::IsNullOrWhiteSpace($BaseUrl)) {
+  $arguments += "--base-url=$BaseUrl"
+}
+
 if ($Detached) {
-  Start-Process -FilePath $exe -ArgumentList @("--profile=$Profile") | Out-Null
+  Start-Process -FilePath $exe -ArgumentList $arguments | Out-Null
 } else {
-  & $exe "--profile=$Profile"
+  & $exe @arguments
 }

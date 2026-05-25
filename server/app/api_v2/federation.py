@@ -6,6 +6,7 @@ from app.api.utils import client_rate_limit_key
 from app.config import get_settings
 from app.dependencies import db_session
 from app.models.user import User
+from app.schemas.v2_device import DeviceOutV2, UserDeviceLookupV2
 from app.schemas.v2_federation import (
     FederationCallWebRtcAnswerRequestV2,
     FederationCallWebRtcIceRequestV2,
@@ -21,21 +22,20 @@ from app.schemas.v2_federation import (
     FederationGroupCallWebRtcOfferRequestV2,
     FederationGroupEventRequestV2,
     FederationGroupInviteAcceptRequestV2,
-    FederationMessageRelayRequestV2,
     FederationGroupSnapshotOutV2,
+    FederationMessageRelayRequestV2,
     FederationWellKnownOutV2,
 )
-from app.schemas.v2_device import DeviceOutV2, UserDeviceLookupV2
-from app.services.device_service_v2 import device_service_v2
 from app.services.call_service import CallProtocolError, call_service
+from app.services.device_service_v2 import device_service_v2
 from app.services.federation_security import federation_security_service
 from app.services.group_call_service import group_call_service
 from app.services.group_conversation_service import group_conversation_service
 from app.services.message_service_v2 import message_service_v2
 from app.services.metrics import metrics
 from app.services.prekey_service_v2 import prekey_service_v2
-from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.rate_limit import rate_limiter
+from app.services.read_state_service_v2 import read_state_service_v2
 from app.services.server_identity import (
     get_federation_signing_public_key_b64,
     get_server_onion,

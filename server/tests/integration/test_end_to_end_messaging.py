@@ -72,8 +72,5 @@ def test_realtime_and_offline_delivery(client) -> None:
         offline_event = bob_ws.receive_json()
         assert offline_event["type"] == "message.new"
         assert offline_event["message"]["sender_address"] == "alice@local.invalid"
-        assert (
-            offline_event["message"]["envelope"]["client_message_id"]
-            == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-        )
+        assert offline_event["message"]["envelope"]["client_message_id"] == "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
         bob_ws.send_json({"type": "message.ack", "message_id": offline_event["message"]["id"]})

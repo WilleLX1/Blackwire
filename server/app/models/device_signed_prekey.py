@@ -9,9 +9,7 @@ from app.models.base import Base
 
 class DeviceSignedPrekey(Base):
     __tablename__ = "device_signed_prekeys"
-    __table_args__ = (
-        UniqueConstraint("device_id", "key_id", name="uq_device_signed_prekey_device_key"),
-    )
+    __table_args__ = (UniqueConstraint("device_id", "key_id", name="uq_device_signed_prekey_device_key"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     device_id: Mapped[str] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
